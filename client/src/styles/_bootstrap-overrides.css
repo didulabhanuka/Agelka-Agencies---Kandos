@@ -1,0 +1,23 @@
+/* Define reusable design tokens */
+:root {
+  --primary-color: #5c3e94; /* Primary color */
+  --secondary-color: #5c3e94; /* Secondary color */
+  --background-color: rgb(25, 25, 25); /* Dark background */
+  --outline-color: #fff;
+  --text-color: #EDEAF6; /* Light text */
+  --muted-color: #C9C3DB; /* Muted text */
+  --link-hover-color: #fff; /* Link hover color */
+}
+
+/* Bootstrap overrides */
+:root {
+  --bs-primary: var(--primary-color);
+  --bs-secondary: var(--secondary-color);
+  --bs-dark: var(--background-color);
+  --bs-light: var(--text-color);
+}
+
+:root {
+  --col-width: 520px;  /* Fixed width for the columns */
+  --col-gap: 24px;     /* Gap between columns */
+}

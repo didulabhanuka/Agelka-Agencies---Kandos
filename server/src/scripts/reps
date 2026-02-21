@@ -1,0 +1,82 @@
+require("dotenv").config();
+const mongoose = require("mongoose");
+
+// Models
+const SalesRep = require("../models/user/salesRep.model");
+
+// -------------------------------
+// SalesRep Seed Data
+// -------------------------------
+const salesRepSeeds = [
+  {
+    repCode: "REP-001",
+    name: "Chaminda Rodrigo",
+    contactNumber: "0712345678",
+    route: "Colombo - Western Region",
+    address: "No. 100, Galle Road, Colombo 03",
+    NIC: "123456789V",
+    status: "active",
+    role: "SalesRep",
+    canLogin: true,
+    lastLogin: null,
+    grns: [], // Empty array for GRNs
+  },
+  {
+    repCode: "REP-002",
+    name: "Suren Perera",
+    contactNumber: "0789876543",
+    route: "Kandy - Central Region",
+    address: "No. 45, Kandy Road, Kandy",
+    NIC: "987654321V",
+    status: "active",
+    role: "SalesRep",
+    canLogin: true,
+    lastLogin: null,
+    grns: [], // Empty array for GRNs
+  },
+];
+
+// ---------------------------------------
+// CONNECT TO MongoDB
+// ---------------------------------------
+async function connectDB() {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log("✔ Connected to MongoDB");
+  } catch (err) {
+    console.error("❌ MongoDB Connection Error:", err);
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------
+// SEED SalesReps
+// ---------------------------------------
+async function seedSalesReps() {
+  console.log("\n🚀 Seeding Sales Representatives...");
+
+  try {
+    await SalesRep.deleteMany({});
+    console.log("🗑  Cleared existing Sales Representatives");
+
+    for (const salesRep of salesRepSeeds) {
+      await SalesRep.create(salesRep);
+    }
+
+    console.log(`✔ Inserted ${salesRepSeeds.length} Sales Representatives`);
+  } catch (err) {
+    console.error("❌ Failed to seed Sales Representatives:", err);
+  }
+}
+
+// ---------------------------------------
+// MAIN SEEDER RUNNER
+// ---------------------------------------
+async function runSeeder() {
+  await connectDB();
+  await seedSalesReps();
+  console.log("\n🎉 Seeding Completed Successfully!");
+  process.exit(0);
+}
+
+runSeeder();

@@ -1,0 +1,36 @@
+const { asyncHandler } = require('../../utils/asyncHandler');
+const { ApiError } = require('../../middlewares/error');
+const { logAction } = require('../../services/audit/audit.service');
+const svc = require('../../services/user/salesRep.service');
+
+exports.create = asyncHandler(async (req, res) => {
+  const doc = await svc.createSalesRep(req.body);
+  await logAction({ userId: req.user.userId, action: 'master.salesReps.create', module: 'Masterfile', details: { id: doc._id }, ip: req.ip, ua: req.headers['user-agent'] });
+  res.status(201).json(doc);
+});
+
+exports.list = asyncHandler(async (req, res) => {
+  const { page, limit, q, status } = req.query;
+  const data = await svc.listSalesReps({ ...(status ? { status } : {}) }, { page, limit, q });
+  res.json(data);
+});
+
+exports.get = asyncHandler(async (req, res) => {
+  const doc = await svc.getSalesRep(req.params.id);
+  if (!doc) throw new ApiError(404, 'Sales rep not found');
+  res.json(doc);
+});
+
+exports.update = asyncHandler(async (req, res) => {
+  const doc = await svc.updateSalesRep(req.params.id, req.body);
+  if (!doc) throw new ApiError(404, 'Sales rep not found');
+  await logAction({ userId: req.user.userId, action: 'master.salesReps.update', module: 'Masterfile', details: { id: req.params.id }, ip: req.ip, ua: req.headers['user-agent'] });
+  res.json(doc);
+});
+
+exports.remove = asyncHandler(async (req, res) => {
+  const doc = await svc.removeSalesRep(req.params.id);
+  if (!doc) throw new ApiError(404, 'Sales rep not found');
+  await logAction({ userId: req.user.userId, action: 'master.salesReps.delete', module: 'Masterfile', details: { id: req.params.id }, ip: req.ip, ua: req.headers['user-agent'] });
+  res.json({ success: true });
+});

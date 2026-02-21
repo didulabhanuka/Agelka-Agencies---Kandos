@@ -1,0 +1,149 @@
+require("dotenv").config();
+const mongoose = require("mongoose");
+
+// Models
+const ProductGroup = require("../models/inventorySettings/ProductGroup.model");
+
+// -------------------------------
+// Product Group Seed Data
+// -------------------------------
+const productGroupSeeds = [
+  {
+    groupCode: "CHOCOLATES",
+    name: "Chocolates",
+    description: "Milk, dark, and assorted chocolates.",
+    status: "active",
+    brands: ["696f96fa105b0396fcfe4f92"], // KANDOS
+    units: ["Piece", "Pack", "Box", "Carton"],
+  },
+  {
+    groupCode: "WAFERS",
+    name: "Wafers",
+    description: "Cream-filled and chocolate-coated wafers.",
+    status: "active",
+    brands: ["696f96fb105b0396fcfe4f94"], // MUNCHEE
+    units: ["Piece", "Pack", "Box", "Carton"],
+  },
+  {
+    groupCode: "BISCUITS",
+    name: "Biscuits",
+    description: "Sweet, savory, and cream biscuits.",
+    status: "active",
+    brands: ["696f96fb105b0396fcfe4f94"], // MUNCHEE
+    units: ["Piece", "Pack", "Box", "Carton", "Case"],
+  },
+  {
+    groupCode: "SNACKS",
+    name: "Snacks",
+    description: "Chips, crackers, and assorted snacks.",
+    status: "active",
+    brands: ["696f96fb105b0396fcfe4f94"], // MUNCHEE
+    units: ["Pack", "Box", "Carton", "Case"],
+  },
+  {
+    groupCode: "SOFT_DRINKS",
+    name: "Soft Drinks",
+    description: "Carbonated beverages and flavored drinks.",
+    status: "active",
+    brands: [
+      "696f96fb105b0396fcfe4f96", // PEPSI
+      "696f96fb105b0396fcfe4f98", // COCA_COLA
+      "696f96fb105b0396fcfe4f9c", // SPRITE
+      "696f96fb105b0396fcfe4f96", // ELEPHANT_HOUSE
+    ],
+    units: ["Bottle", "Can", "Pack", "Case", "Carton"],
+  },
+  {
+    groupCode: "ENERGY_DRINKS",
+    name: "Energy Drinks",
+    description: "Energy and caffeinated beverages.",
+    status: "active",
+    brands: ["696f96fb105b0396fcfe4f98"], // PEPSI
+    units: ["Bottle", "Can", "Pack", "Case"],
+  },
+  {
+    groupCode: "FRUIT_DRINKS",
+    name: "Fruit Drinks",
+    description: "Fruit-based beverages, nectars, and flavored drinks.",
+    status: "active",
+    brands: ["696f96fb105b0396fcfe4f96"], // ELEPHANT_HOUSE
+    units: ["Bottle", "Pack", "Case", "Carton"],
+  },
+  {
+    groupCode: "CORDIALS",
+    name: "Cordials & Syrups",
+    description: "Sweetened concentrated beverages and syrups.",
+    status: "active",
+    brands: ["696f96fb105b0396fcfe4f96"], // ELEPHANT_HOUSE
+    units: ["Bottle", "Carton", "Case"],
+  },
+  {
+    groupCode: "CONFECTIONERY",
+    name: "Confectionery",
+    description: "Candies, toffees, lollipops, and sweets.",
+    status: "active",
+    brands: [
+      "696f96fa105b0396fcfe4f92", // KANDOS
+      "696f96fb105b0396fcfe4f94", // MUNCHEE
+    ],
+    units: ["Piece", "Pack", "Jar", "Box"],
+  },
+  {
+    groupCode: "SODA_VARIANTS",
+    name: "Soda Variants",
+    description: "Lemon-lime soda, tonic, soda water, and flavored sodas.",
+    status: "active",
+    brands: [
+      "696f96fb105b0396fcfe4f98", // PEPSI
+      "696f96fb105b0396fcfe4f9a", // COCA_COLA
+      "696f96fb105b0396fcfe4f9c", // SPRITE
+      "696f96fb105b0396fcfe4f96", // ELEPHANT_HOUSE
+    ],
+    units: ["Bottle", "Can", "Pack", "Case"],
+  },
+];
+
+// ---------------------------------------
+// CONNECT TO MongoDB
+// ---------------------------------------
+async function connectDB() {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log("✔ Connected to MongoDB");
+  } catch (err) {
+    console.error("❌ MongoDB Connection Error:", err);
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------
+// SEED Product Groups
+// ---------------------------------------
+async function seedProductGroups() {
+  console.log("\n🚀 Seeding Product Groups...");
+
+  try {
+    await ProductGroup.deleteMany({});
+    console.log("🗑  Cleared existing Product Groups");
+
+    for (const group of productGroupSeeds) {
+      await ProductGroup.create(group);
+    }
+
+    console.log(`✔ Inserted ${productGroupSeeds.length} Product Groups`);
+  } catch (err) {
+    console.error("❌ Failed to seed Product Groups:", err);
+  }
+}
+
+// ---------------------------------------
+// MAIN SEEDER RUNNER
+// ---------------------------------------
+async function runSeeder() {
+  await connectDB();
+  await seedProductGroups();
+  console.log("\n🎉 Seeding Completed Successfully!");
+  process.exit(0);
+}
+
+runSeeder();

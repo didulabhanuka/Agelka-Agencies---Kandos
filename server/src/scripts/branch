@@ -1,0 +1,78 @@
+require("dotenv").config();
+const mongoose = require("mongoose");
+
+// Models
+const Branch = require("../models/inventorySettings/branch.model");
+
+// -------------------------------
+// Branch Seed Data
+// -------------------------------
+const branchSeeds = [
+  {
+    branchCode: "MAIN",
+    name: "Main Distribution Branch",
+    address: "No. 1 Central Road, Colombo",
+    phone: "+94112223344",
+    email: "main@agelka.com",
+    status: "active",
+    createdBy: null, // Empty user ID
+    updatedBy: null, // Empty user ID
+    version: 1,
+  },
+  {
+    branchCode: "KANDY",
+    name: "Kandy Regional Branch",
+    address: "No. 22 Hill Street, Kandy",
+    phone: "+94812345678",
+    email: "kandy@agelka.com",
+    status: "active",
+    createdBy: null, // Empty user ID
+    updatedBy: null, // Empty user ID
+    version: 3,
+  },
+];
+
+// ---------------------------------------
+// CONNECT TO MongoDB
+// ---------------------------------------
+async function connectDB() {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log("✔ Connected to MongoDB");
+  } catch (err) {
+    console.error("❌ MongoDB Connection Error:", err);
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------
+// SEED Branches
+// ---------------------------------------
+async function seedBranches() {
+  console.log("\n🚀 Seeding Branches...");
+
+  try {
+    await Branch.deleteMany({});
+    console.log("🗑  Cleared existing Branches");
+
+    for (const branch of branchSeeds) {
+      await Branch.create(branch);
+    }
+
+    console.log(`✔ Inserted ${branchSeeds.length} Branches`);
+  } catch (err) {
+    console.error("❌ Failed to seed Branches:", err);
+  }
+}
+
+// ---------------------------------------
+// MAIN SEEDER RUNNER
+// ---------------------------------------
+async function runSeeder() {
+  await connectDB();
+  await seedBranches();
+  console.log("\n🎉 Seeding Completed Successfully!");
+  process.exit(0);
+}
+
+runSeeder();

@@ -1,0 +1,117 @@
+require("dotenv").config();
+const mongoose = require("mongoose");
+
+// Models
+const Supplier = require("../models/user/supplier.model");
+const SalesRep = require("../models/user/salesRep.model");
+
+// Sample SalesRep IDs (from your data)
+const salesRepIDs = [
+  "696e25749c47e7c0a7a5eae3", // REP-001
+  "696e25749c47e7c0a7a5eae5", // REP-002
+];
+// -------------------------------
+// Supplier Seed Data
+// -------------------------------
+const supplierSeeds = [
+  {
+    supplierCode: "SUP-001",
+    name: "Kandos Manufacturing PLC",
+    address: "No. 100, Old Road, Ratmalana",
+    contactNumber: "0112345678",
+    owner: "Chaminda Rodrigo",
+    status: "active",
+    grns: [], // Empty array for GRNs
+    purchaseOrders: [], // Empty array for purchase orders
+    salesRep: salesRepIDs[0], // Assigning sales rep REP-001
+  },
+  {
+    supplierCode: "SUP-002",
+    name: "Munchee CBL Foods",
+    address: "CBL Factory Complex, Pannipitiya",
+    contactNumber: "0112789456",
+    owner: "Suren Perera",
+    status: "active",
+    grns: [], // Empty array for GRNs
+    purchaseOrders: [], // Empty array for purchase orders
+    salesRep: salesRepIDs[0], // Assigning sales rep REP-002
+  },
+  {
+    supplierCode: "SUP-003",
+    name: "Highland Dairy Supply",
+    address: "Nuwara Eliya Main Road",
+    contactNumber: "0521239874",
+    owner: "Anjali Fernando",
+    status: "active",
+    grns: [], // Empty array for GRNs
+    purchaseOrders: [], // Empty array for purchase orders
+    salesRep: salesRepIDs[1], // No sales rep assigned
+  },
+  {
+    supplierCode: "SUP-004",
+    name: "Sunrise Beverage Traders",
+    address: "No. 45, Matale Road, Kandy",
+    contactNumber: "0812223344",
+    owner: "Ruwan Jayasekara",
+    status: "inactive",
+    grns: [], // Empty array for GRNs
+    purchaseOrders: [], // Empty array for purchase orders
+    salesRep: salesRepIDs[1], // No sales rep assigned
+  },
+  {
+    supplierCode: "SUP-005",
+    name: "Lanka Wholesale Distribution",
+    address: "20/4 Industrial Zone, Katunayake",
+    contactNumber: "0115672345",
+    owner: "Nipuni Silva",
+    status: "active",
+    grns: [], // Empty array for GRNs
+    purchaseOrders: [], // Empty array for purchase orders
+    salesRep: salesRepIDs[1], // Assigning sales rep REP-001
+  },
+];
+
+// ---------------------------------------
+// CONNECT TO MongoDB
+// ---------------------------------------
+async function connectDB() {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log("✔ Connected to MongoDB");
+  } catch (err) {
+    console.error("❌ MongoDB Connection Error:", err);
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------
+// SEED SUPPLIERS
+// ---------------------------------------
+async function seedSuppliers() {
+  console.log("\n🚀 Seeding Suppliers...");
+
+  try {
+    await Supplier.deleteMany({});
+    console.log("🗑  Cleared existing Suppliers");
+
+    for (const supplier of supplierSeeds) {
+      await Supplier.create(supplier);
+    }
+
+    console.log(`✔ Inserted ${supplierSeeds.length} Suppliers`);
+  } catch (err) {
+    console.error("❌ Failed to seed Suppliers:", err);
+  }
+}
+
+// ---------------------------------------
+// MAIN SEEDER RUNNER
+// ---------------------------------------
+async function runSeeder() {
+  await connectDB();
+  await seedSuppliers();
+  console.log("\n🎉 Seeding Completed Successfully!");
+  process.exit(0);
+}
+
+runSeeder();

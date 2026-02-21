@@ -1,0 +1,438 @@
+require("dotenv").config();
+const mongoose = require("mongoose");
+
+// Models
+const Item = require("../models/inventory/Item.model");
+const Brand = require("../models/inventorySettings/brand.model");
+const ProductGroup = require("../models/inventorySettings/ProductGroup.model");
+const Supplier = require("../models/user/supplier.model");
+
+// Group, Brand, and Supplier Object IDs
+const groupIDs = {
+  CHOCOLATES: "696f98795a445f9969e9b4dd",
+  WAFERS: "696f98795a445f9969e9b4df",
+  BISCUITS: "696f98795a445f9969e9b4e1",
+  SNACKS: "696f98795a445f9969e9b4e3",
+  SOFT_DRINKS: "696f98795a445f9969e9b4e5",
+  ENERGY_DRINKS: "696f987a5a445f9969e9b4e7",
+  FRUIT_DRINKS: "696f987a5a445f9969e9b4e9",
+  CORDIALS: "696f987a5a445f9969e9b4eb",
+  CONFECTIONERY: "696f987a5a445f9969e9b4ed",
+  SODA_VARIANTS: "696f987a5a445f9969e9b4ef",
+};
+
+const brandIDs = {
+  KANDOS: "696f96fa105b0396fcfe4f92",
+  MUNCHEE: "696f96fb105b0396fcfe4f94",
+  ELEPHANT_HOUSE: "696f96fb105b0396fcfe4f96",
+  PEPSI: "696f96fb105b0396fcfe4f98",
+  COCA_COLA: "696f96fb105b0396fcfe4f9a",
+  SPRITE: "696f96fb105b0396fcfe4f9c",
+};
+
+const supplierIDs = {
+  KANDOS_MANUFACTURING: "693669118e955afa4d0124a4",
+  MUNCHEE_CBL_FOODS: "693669118e955afa4d0124a5",
+  HIGHLAND_DAIRY: "693669118e955afa4d0124a6",
+  SUNRISE_BEVERAGE: "693669118e955afa4d0124a7",
+  LANKA_WHOLESALE: "693669118e955afa4d0124a8",
+};
+
+// -------------------------------
+// Item Seed Data
+// -------------------------------
+const itemSeeds = [
+  {
+    itemCode: "KND-CHOC-001",
+    name: "Kandos Milk Chocolate 100g",
+    description: "Premium milk chocolate bar by Kandos.",
+    brand: brandIDs.KANDOS,
+    productGroup: groupIDs.CHOCOLATES,
+    unit: "Piece",
+    supplier: supplierIDs.KANDOS_MANUFACTURING,
+    avgCostBase: 180,
+    sellingPriceBase: 220,
+    reorderLevel: 20,
+    status: "active",
+  },
+  {
+    itemCode: "KND-CHOC-BOX",
+    name: "Kandos Dark Chocolate Box",
+    description: "Assorted dark chocolates in a gift box.",
+    brand: brandIDs.KANDOS,
+    productGroup: groupIDs.CHOCOLATES,
+    unit: "Box",
+    supplier: supplierIDs.KANDOS_MANUFACTURING,
+    avgCostBase: 950,
+    sellingPriceBase: 1200,
+    reorderLevel: 10,
+    status: "active",
+  },
+  {
+    itemCode: "KND-TOFFEE-PK",
+    name: "Kandos Toffee Pack",
+    description: "Assorted caramel toffees.",
+    brand: brandIDs.KANDOS,
+    productGroup: groupIDs.CONFECTIONERY,
+    unit: "Pack",
+    supplier: supplierIDs.KANDOS_MANUFACTURING,
+    avgCostBase: 60,
+    sellingPriceBase: 90,
+    reorderLevel: 30,
+    status: "active",
+  },
+  {
+    itemCode: "MNC-BISC-LEM-PK",
+    name: "Munchee Lemon Cream Biscuit Pack",
+    description: "Sweet biscuit with lemon cream filling.",
+    brand: brandIDs.MUNCHEE,
+    productGroup: groupIDs.BISCUITS,
+    unit: "Pack",
+    supplier: supplierIDs.MUNCHEE_CBL_FOODS,
+    avgCostBase: 70,
+    sellingPriceBase: 100,
+    reorderLevel: 50,
+    status: "active",
+  },
+  {
+    itemCode: "MNC-WAF-SUP-001",
+    name: "Munchee Super Cream Wafers",
+    description: "Crispy wafer biscuits with cream layers.",
+    brand: brandIDs.MUNCHEE,
+    productGroup: groupIDs.WAFERS,
+    unit: "Box",
+    supplier: supplierIDs.MUNCHEE_CBL_FOODS,
+    avgCostBase: 250,
+    sellingPriceBase: 320,
+    reorderLevel: 25,
+    status: "active",
+  },
+  {
+    itemCode: "MNC-SNACK-CASE",
+    name: "Munchee Snack Crackers (Case)",
+    description: "Bulk pack of assorted crackers.",
+    brand: brandIDs.MUNCHEE,
+    productGroup: groupIDs.SNACKS,
+    unit: "Case",
+    supplier: supplierIDs.MUNCHEE_CBL_FOODS,
+    avgCostBase: 1400,
+    sellingPriceBase: 1650,
+    reorderLevel: 5,
+    status: "active",
+  },
+  {
+    itemCode: "EH-FRUIT-PACK",
+    name: "EH Mixed Fruit Drink 200ml",
+    description: "Refreshing mixed fruit beverage.",
+    brand: brandIDs.ELEPHANT_HOUSE,
+    productGroup: groupIDs.FRUIT_DRINKS,
+    unit: "Pack",
+    supplier: supplierIDs.HIGHLAND_DAIRY,
+    avgCostBase: 75,
+    sellingPriceBase: 110,
+    reorderLevel: 40,
+    status: "active",
+  },
+  {
+    itemCode: "EH-CRUSH-ORNG",
+    name: "Elephant House Orange Crush 1L",
+    description: "Popular orange-flavored soft drink.",
+    brand: brandIDs.ELEPHANT_HOUSE,
+    productGroup: groupIDs.SOFT_DRINKS,
+    unit: "Bottle",
+    supplier: supplierIDs.HIGHLAND_DAIRY,
+    avgCostBase: 160,
+    sellingPriceBase: 200,
+    reorderLevel: 30,
+    status: "active",
+  },
+  {
+    itemCode: "COC-BTL-1500",
+    name: "Coca-Cola 1.5L Bottle",
+    description: "Large PET bottle – Coca-Cola.",
+    brand: brandIDs.COCA_COLA,
+    productGroup: groupIDs.SOFT_DRINKS,
+    unit: "Bottle",
+    supplier: supplierIDs.LANKA_WHOLESALE,
+    avgCostBase: 180,
+    sellingPriceBase: 240,
+    reorderLevel: 35,
+    status: "active",
+  },
+];
+
+// ---------------------------------------
+// CONNECT TO MongoDB
+// ---------------------------------------
+async function connectDB() {
+  try {
+    await mongoose.connect(process.env.MONGODB_URI);
+    console.log("✔ Connected to MongoDB");
+  } catch (err) {
+    console.error("❌ MongoDB Connection Error:", err);
+    process.exit(1);
+  }
+}
+
+// ---------------------------------------
+// SEED Items
+// ---------------------------------------
+async function seedItems() {
+  console.log("\n🚀 Seeding Items...");
+
+  try {
+    await Item.deleteMany({});
+    console.log("🗑  Cleared existing Items");
+
+    for (const item of itemSeeds) {
+      await Item.create(item);
+    }
+
+    console.log(`✔ Inserted ${itemSeeds.length} Items`);
+  } catch (err) {
+    console.error("❌ Failed to seed Items:", err);
+  }
+}
+
+// ---------------------------------------
+// MAIN SEEDER RUNNER
+// ---------------------------------------
+async function runSeeder() {
+  await connectDB();
+  await seedItems();
+  console.log("\n🎉 Seeding Completed Successfully!");
+  process.exit(0);
+}
+
+runSeeder();
+
+
+----------------------------------------------
+
+
+require("dotenv").config();
+const mongoose = require("mongoose");
+
+// Model
+const Item = require("../models/inventory/item.model");
+
+// -------------------------------
+// IDs
+// -------------------------------
+const groupIDs = {
+  CHOCOLATES: "696f98795a445f9969e9b4dd",
+  BISCUITS: "696f98795a445f9969e9b4e1",
+  SOFT_DRINKS: "696f98795a445f9969e9b4e5",
+  SNACKS: "696f98795a445f9969e9b4e3",
+};
+
+const brandIDs = {
+  KANDOS: "696f96fa105b0396fcfe4f92",
+  MUNCHEE: "696f96fb105b0396fcfe4f94",
+  ELEPHANT_HOUSE: "696f96fb105b0396fcfe4f96",
+  COCA_COLA: "696f96fb105b0396fcfe4f9a",
+};
+
+const supplierIDs = {
+  KANDOS_MANUFACTURING: "693669118e955afa4d0124a4",
+  MUNCHEE_CBL_FOODS: "693669118e955afa4d0124a5",
+  HIGHLAND_DAIRY: "693669118e955afa4d0124a6",
+  LANKA_WHOLESALE: "693669118e955afa4d0124a8",
+};
+
+// -------------------------------
+// ITEM SEEDS
+// -------------------------------
+const itemSeeds = [
+  // ============================================================
+  // TYPE 1: NO SEPARATE BASE (PRIMARY ONLY)
+  // baseUom, avgCostBase, sellingPriceBase → NOT SET
+  // ============================================================
+
+  {
+    itemCode: "KND-CHOC-001",
+    name: "Kandos Milk Chocolate 100g",
+    description: "Premium milk chocolate bar by Kandos.",
+    brand: brandIDs.KANDOS,
+    productGroup: groupIDs.CHOCOLATES,
+    supplier: supplierIDs.KANDOS_MANUFACTURING,
+
+    primaryUom: "PACK",
+    baseUom: "PACK", // same as primary (logical no-base case)
+    uoms: [
+      { uomCode: "PACK", parentCode: null, factorToParent: 1 },
+    ],
+
+    avgCostPrimary: 180,
+    sellingPricePrimary: 220,
+
+    reorderLevel: 20,
+    status: "active",
+  },
+
+  {
+    itemCode: "MNC-SNACK-CRACKER",
+    name: "Munchee Snack Crackers 200g",
+    description: "Crispy baked snack crackers.",
+    brand: brandIDs.MUNCHEE,
+    productGroup: groupIDs.SNACKS,
+    supplier: supplierIDs.MUNCHEE_CBL_FOODS,
+
+    primaryUom: "PACK",
+    baseUom: "PACK",
+    uoms: [
+      { uomCode: "PACK", parentCode: null, factorToParent: 1 },
+    ],
+
+    avgCostPrimary: 150,
+    sellingPricePrimary: 200,
+
+    reorderLevel: 40,
+    status: "active",
+  },
+
+  {
+    itemCode: "COC-CAN-330",
+    name: "Coca-Cola Can 330ml",
+    description: "Chilled Coca-Cola 330ml can.",
+    brand: brandIDs.COCA_COLA,
+    productGroup: groupIDs.SOFT_DRINKS,
+    supplier: supplierIDs.LANKA_WHOLESALE,
+
+    primaryUom: "CAN",
+    baseUom: "CAN",
+    uoms: [
+      { uomCode: "CAN", parentCode: null, factorToParent: 1 },
+    ],
+
+    avgCostPrimary: 90,
+    sellingPricePrimary: 130,
+
+    reorderLevel: 60,
+    status: "active",
+  },
+
+  // ============================================================
+  // TYPE 2: PRIMARY → BASE (PIECE)
+  // ============================================================
+
+  {
+    itemCode: "MNC-BISC-LEM-PK",
+    name: "Munchee Lemon Cream Biscuit Pack",
+    description: "Sweet biscuit with lemon cream filling.",
+    brand: brandIDs.MUNCHEE,
+    productGroup: groupIDs.BISCUITS,
+    supplier: supplierIDs.MUNCHEE_CBL_FOODS,
+
+    primaryUom: "PACK",
+    baseUom: "PIECE",
+    uoms: [
+      { uomCode: "PACK", parentCode: null, factorToParent: 1 },
+      { uomCode: "PIECE", parentCode: "PACK", factorToParent: 10 }, // 10 PIECEs per pack
+    ],
+
+    avgCostPrimary: 70,
+    sellingPricePrimary: 100,
+
+    // explicitly set (optional but clear)
+    factorToBase: 10,
+    avgCostBase: 7,
+    sellingPriceBase: 10,
+
+    reorderLevel: 50,
+    status: "active",
+  },
+
+  {
+    itemCode: "EH-CRUSH-1L",
+    name: "Elephant House Orange Crush 1L",
+    description: "Popular orange-flavored soft drink.",
+    brand: brandIDs.ELEPHANT_HOUSE,
+    productGroup: groupIDs.SOFT_DRINKS,
+    supplier: supplierIDs.HIGHLAND_DAIRY,
+
+    primaryUom: "BOTTLE",
+    baseUom: "ML",
+    uoms: [
+      { uomCode: "BOTTLE", parentCode: null, factorToParent: 1 },
+      { uomCode: "ML", parentCode: "BOTTLE", factorToParent: 1000 },
+    ],
+
+    avgCostPrimary: 160,
+    sellingPricePrimary: 200,
+
+    factorToBase: 1000,
+    avgCostBase: 0.16,
+    sellingPriceBase: 0.2,
+
+    reorderLevel: 30,
+    status: "active",
+  },
+
+  {
+    itemCode: "COC-BTL-1500",
+    name: "Coca-Cola 1.5L Bottle",
+    description: "Coca-Cola PET bottle 1.5L",
+    brand: brandIDs.COCA_COLA,
+    productGroup: groupIDs.SOFT_DRINKS,
+    supplier: supplierIDs.LANKA_WHOLESALE,
+
+    primaryUom: "BOTTLE",
+    baseUom: "ML",
+    uoms: [
+      { uomCode: "BOTTLE", parentCode: null, factorToParent: 1 },
+      { uomCode: "ML", parentCode: "BOTTLE", factorToParent: 1500 },
+    ],
+
+    avgCostPrimary: 180,
+    sellingPricePrimary: 240,
+
+    factorToBase: 1500,
+    avgCostBase: 0.12,
+    sellingPriceBase: 0.16,
+
+    reorderLevel: 35,
+    status: "active",
+  },
+];
+
+// -------------------------------
+// CONNECT DB
+// -------------------------------
+async function connectDB() {
+  await mongoose.connect(process.env.MONGODB_URI);
+  console.log("✔ MongoDB connected");
+}
+
+// -------------------------------
+// SEED ITEMS
+// -------------------------------
+async function seedItems() {
+  console.log("\n🚀 Seeding Items...");
+
+  await Item.deleteMany({});
+  console.log("🗑  Existing items cleared");
+
+  for (const item of itemSeeds) {
+    const doc = new Item(item);
+    await doc.save(); // model computes factorToBase where needed
+  }
+
+  console.log(`✔ Inserted ${itemSeeds.length} items`);
+}
+
+// -------------------------------
+// RUN
+// -------------------------------
+(async function run() {
+  try {
+    await connectDB();
+    await seedItems();
+    console.log("\n🎉 Item seeding completed successfully!");
+  } catch (err) {
+    console.error("❌ Seeder failed:", err);
+  } finally {
+    await mongoose.disconnect();
+    process.exit(0);
+  }
+})();
