@@ -5,6 +5,7 @@ const { ApiError } = require("../../middlewares/error");
 const { logAction } = require("../../services/audit/audit.service");
 const svc = require("../../services/sale/salesInvoice.service");
 
+// Extracts authenticated actor ids used for scope enforcement and audit logging.
 function getActorIds(req) {
   return {
     actorType: req.user?.actorType,
@@ -14,17 +15,18 @@ function getActorIds(req) {
   };
 }
 
-// -------------------- CREATE --------------------
+// POST /sales/invoices - Creates a sales invoice and enforces SalesRep ownership when applicable.
 exports.create = asyncHandler(async (req, res) => {
   const { actorType, salesRepId, auditActorId } = getActorIds(req);
 
   const payload = { ...req.body };
 
-  // ✅ SalesRep creates invoice => force ownership
+  // Force salesRep ownership when the invoice is created by a SalesRep actor.
   if (actorType === "SalesRep") payload.salesRep = salesRepId;
 
   const result = await svc.createSalesInvoice(payload);
 
+  // Write audit log for invoice creation.
   await logAction({
     userId: auditActorId,
     action: "transactions.salesInvoice.create",
@@ -47,7 +49,7 @@ exports.create = asyncHandler(async (req, res) => {
   });
 });
 
-// -------------------- GET SINGLE --------------------
+// GET /sales/invoices/:id - Returns one invoice within actor scope (SalesRep restricted to own records).
 exports.get = asyncHandler(async (req, res) => {
   const { actorType, salesRepId } = getActorIds(req);
 
@@ -58,15 +60,14 @@ exports.get = asyncHandler(async (req, res) => {
   return res.json(doc);
 });
 
-// -------------------- LIST --------------------
+// GET /sales/invoices - Lists invoices with query filters and actor-based scope.
 exports.list = asyncHandler(async (req, res) => {
   const { actorType, salesRepId } = getActorIds(req);
-
   const { customer, status, limit, branch, salesRep } = req.query;
 
   const scope = actorType === "SalesRep" ? { salesRep: salesRepId } : {};
   const docs = await svc.listInvoices(
-    { customer, status, branch, salesRep }, // Admin can filter by query
+    { customer, status, branch, salesRep },
     { limit: Number(limit) || 100 },
     scope
   );
@@ -74,13 +75,14 @@ exports.list = asyncHandler(async (req, res) => {
   return res.json(docs);
 });
 
-// -------------------- APPROVE INVOICE (Admin/DataEntry only by routes) --------------------
+// POST /sales/invoices/:id/approve - Approves an invoice (route-restricted to Admin/DataEntry) and posts ledger updates.
 exports.approve = asyncHandler(async (req, res) => {
   const { userId } = getActorIds(req);
 
   const updated = await svc.approveInvoice(req.params.id, userId);
   if (!updated) throw new ApiError(404, "Sales Invoice not found");
 
+  // Write audit log for invoice approval.
   await logAction({
     userId,
     action: "transactions.salesInvoice.approve",
@@ -102,7 +104,7 @@ exports.approve = asyncHandler(async (req, res) => {
   });
 });
 
-// -------------------- DELETE (scoped) --------------------
+// DELETE /sales/invoices/:id - Deletes an invoice within actor scope and records an audit log.
 exports.delete = asyncHandler(async (req, res) => {
   const { actorType, salesRepId, auditActorId } = getActorIds(req);
 
@@ -111,6 +113,7 @@ exports.delete = asyncHandler(async (req, res) => {
 
   if (!deleted) throw new ApiError(404, "Sales Invoice not found");
 
+  // Write audit log for invoice deletion.
   await logAction({
     userId: auditActorId,
     action: "transactions.salesInvoice.delete",
@@ -131,11 +134,11 @@ exports.delete = asyncHandler(async (req, res) => {
   });
 });
 
-// -------------------- UPDATE (scoped) --------------------
+// PUT /sales/invoices/:id - Updates an invoice within actor scope and prevents SalesRep ownership changes.
 exports.update = asyncHandler(async (req, res) => {
   const { actorType, salesRepId, auditActorId } = getActorIds(req);
 
-  // ✅ SalesRep should NOT change salesRep field via payload
+  // Prevent SalesRep actors from changing invoice ownership via payload.
   const payload = { ...req.body };
   if (actorType === "SalesRep") delete payload.salesRep;
 
@@ -144,6 +147,7 @@ exports.update = asyncHandler(async (req, res) => {
 
   if (!updated) throw new ApiError(404, "Sales Invoice not found");
 
+  // Write audit log for invoice update.
   await logAction({
     userId: auditActorId,
     action: "transactions.salesInvoice.update",
@@ -164,16 +168,25 @@ exports.update = asyncHandler(async (req, res) => {
   });
 });
 
-// -------------------- AVAILABLE ITEMS (scoped by salesRep) --------------------
+// GET /sales/invoices/available-items - Returns sellable items for a branch, scoped to SalesRep stock when applicable.
 exports.listAvailableItems = asyncHandler(async (req, res) => {
-  const { actorType, salesRepId } = getActorIds(req);
+  const { actorType, salesRepId, userId } = getActorIds(req);
 
   const branchId = req.query.branch || req.body.branch;
   if (!mongoose.Types.ObjectId.isValid(branchId)) {
     throw new ApiError(400, "Invalid branch ID");
   }
 
-  const items = await svc.listAvailableSaleItems(branchId, actorType === "SalesRep" ? salesRepId : null);
+  const resolvedSalesRepId = actorType === "SalesRep" 
+    ? salesRepId 
+    : req.query.salesRep || req.body.salesRep;
+
+  if (!resolvedSalesRepId || !mongoose.Types.ObjectId.isValid(resolvedSalesRepId)) {
+    throw new ApiError(400, "Sales Rep ID is required to load available items");
+  }
+
+  const items = await svc.listAvailableSaleItems(branchId, resolvedSalesRepId);
+
   return res.json({ success: true, data: items });
 });
 

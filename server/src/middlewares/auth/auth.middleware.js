@@ -1,13 +1,15 @@
+// middlewares/auth/auth.middleware.js
 const { ApiError } = require("../error");
 const { verifyAccessToken } = require("../../utils/jwtUtils");
 const User = require("../../models/user/user.model");
 const SalesRep = require("../../models/user/salesRep.model");
 
+// Verifies access token from Authorization header (Bearer) or fallback cookie and attaches decoded payload to req.user.
 async function verifyJWT(req, _res, next) {
   const header = req.headers.authorization || "";
   const bearerToken = header.startsWith("Bearer ") ? header.slice(7) : null;
 
-  // optional cookie fallback
+  // Allow cookie-based access token fallback when Authorization header is not present.
   const cookieToken = req.cookies?.accessToken || null;
 
   const token = bearerToken || cookieToken;
@@ -23,6 +25,7 @@ async function verifyJWT(req, _res, next) {
   }
 }
 
+// Enforces role-based access for internal users and SalesRep actors, while hydrating req.authActor context.
 function requireRole(...roleNames) {
   return async (req, _res, next) => {
     if (!req.user) return next(new ApiError(401, "Unauthorized"));
@@ -57,6 +60,7 @@ function requireRole(...roleNames) {
   };
 }
 
+// Applies a reusable scope filter for SalesRep-owned resources while leaving User actors unscoped.
 function scopeBySalesRep(fieldName = "salesRep") {
   return (req, _res, next) => {
     if (req.authActor?.actorType === "User") {
@@ -72,7 +76,7 @@ function scopeBySalesRep(fieldName = "salesRep") {
   };
 }
 
-// optional helper (nice to have)
+// Convenience alias for verifyJWT when route semantics prefer requireAuth naming.
 function requireAuth(req, res, next) {
   return verifyJWT(req, res, next);
 }

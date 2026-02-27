@@ -9,6 +9,7 @@ import { useAuth } from "../../context/AuthContext";
 
 import {
   createCustomerPayment,
+  updateCustomerPayment,
   getCustomerOutstanding,
   getCustomerOpenInvoices,
 } from "../../lib/api/finance.api";
@@ -46,21 +47,25 @@ const formatDateText = (value) => {
 
 const PaymentCreateModal = ({
   show,
-  mode = "create", // "create" | "view"
+  mode = "create", // "create" | "edit" | "view"
   payment,
   onClose,
   onSuccess,
 }) => {
   const isView = mode === "view";
   const isCreate = mode === "create";
+  const isEdit = mode === "edit";
+
+  // true when the form fields should be editable
+  const isEditable = isCreate || isEdit;
 
   // ------------------------------------------------------------
   // RBAC
   // ------------------------------------------------------------
   const { user } = useAuth();
 
-  const actorType = user?.actorType; // "User" | "SalesRep"
-  const role = user?.role; // "Admin" | "DataEntry" | "SalesRep"
+  const actorType = user?.actorType;
+  const role = user?.role;
 
   const isAdminOrDataEntry =
     actorType === "User" && (role === "Admin" || role === "DataEntry");
@@ -96,7 +101,7 @@ const PaymentCreateModal = ({
     paymentNo: "",
     paymentDate: new Date().toISOString().substring(0, 10),
     customer: "",
-    amount: "", // display-only in create mode (auto calc)
+    amount: "",
     method: "",
     referenceNo: "",
     collectedBy: "",
@@ -124,7 +129,7 @@ const PaymentCreateModal = ({
     setLoadingInvoices(false);
   };
 
-  const populateViewForm = (p) => {
+  const populateViewEditForm = (p) => {
     setForm({
       paymentNo: p.paymentNo || "",
       paymentDate: p.paymentDate
@@ -164,15 +169,25 @@ const PaymentCreateModal = ({
   // Init / Reset on open-close
   // ------------------------------------------------------------
   useEffect(() => {
-    if (!show) {
-      resetForm();
-      return;
-    }
+    if (!show) return;
 
     loadDropdowns();
 
-    if (isView && payment) {
-      populateViewForm(payment);
+    if ((isView || isEdit) && payment) {
+      populateViewEditForm(payment);
+
+      // For edit mode: also load outstanding so the info chip is populated
+      if (isEdit) {
+        const customerId = payment.customer?._id || payment.customer;
+        if (customerId) {
+          getCustomerOutstanding(customerId)
+            .then((res) => {
+              const out = typeof res === "number" ? res : res?.outstanding ?? 0;
+              setOutstanding(out);
+            })
+            .catch(() => setOutstanding(null));
+        }
+      }
       return;
     }
 
@@ -180,9 +195,9 @@ const PaymentCreateModal = ({
       resetForm();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [show, mode, payment, isAdminOrDataEntry, isSalesRep]);
+  }, [show, mode, payment]);
 
-  // Keep collectedBy locked to logged-in SalesRep
+  // Keep collectedBy locked to logged-in SalesRep in create mode
   useEffect(() => {
     if (!show) return;
     if (!isCreate) return;
@@ -258,18 +273,16 @@ const PaymentCreateModal = ({
   const handleChange = (e) => {
     if (isView) return;
     const { name, value } = e.target;
-
-    // amount is auto-only in create mode
-    if (name === "amount" && isCreate) return;
-
+    // amount is always auto-calculated in create/edit modes
+    if (name === "amount") return;
     setForm((f) => ({ ...f, [name]: value }));
   };
 
   // ------------------------------------------------------------
-  // Allocation input change (decimal friendly)
+  // Allocation input change (create & edit modes)
   // ------------------------------------------------------------
   const handleAllocAmountChange = (index, value) => {
-    if (!isCreate) return;
+    if (!isEditable) return;
 
     const ok = value === "" || /^\d*(\.\d{0,2})?$/.test(value);
     if (!ok) return;
@@ -295,7 +308,7 @@ const PaymentCreateModal = ({
   };
 
   const normalizeAllocOnBlur = (index) => {
-    if (!isCreate) return;
+    if (!isEditable) return;
 
     setAllocPreview((prev) =>
       prev.map((row, i) => {
@@ -341,6 +354,7 @@ const PaymentCreateModal = ({
     [allocPreview]
   );
 
+  // In view mode show stored amount; in create/edit auto-calculate from allocations
   const displayAmount = isView ? Number(form.amount || 0) : Number(totalAllocated || 0);
 
   // ------------------------------------------------------------
@@ -393,18 +407,34 @@ const PaymentCreateModal = ({
           value: form.collectedBy,
         }
       : {
-          label: payment?.collectedBy?.name || payment?.collectedBy?.repCode || loggedInSalesRepLabel,
+          label:
+            payment?.collectedBy?.name ||
+            payment?.collectedBy?.repCode ||
+            loggedInSalesRepLabel,
           value: form.collectedBy,
         }
     : null;
 
+  // ------------------------------------------------------------
+  // Title / subtitle per mode
+  // ------------------------------------------------------------
   const titleText = isView
     ? `View Payment ${payment?.paymentNo || ""}`
+    : isEdit
+    ? `Edit Payment ${payment?.paymentNo || ""}`
     : "Record Customer Payment";
 
   const subtitleText = isView
     ? "View payment details and invoice allocations."
+    : isEdit
+    ? "Update allocation amounts. Payment total is auto-calculated."
     : "Enter allocation amounts per invoice. Payment amount is auto-calculated from allocations.";
+
+  const modeBadge = isView
+    ? { label: "View", cls: "bg-light text-dark border" }
+    : isEdit
+    ? { label: "Edit", cls: "bg-warning-subtle text-warning-emphasis border border-warning-subtle" }
+    : { label: "Create", cls: "bg-success-subtle text-success-emphasis border border-success-subtle" };
 
   // ------------------------------------------------------------
   // Submit
@@ -460,7 +490,7 @@ const PaymentCreateModal = ({
         paymentNo: form.paymentNo,
         paymentDate: form.paymentDate,
         customer: form.customer,
-        amount: centsToNum(toCents(displayAmount)), // derived from allocations
+        amount: centsToNum(toCents(displayAmount)),
         method: form.method,
         referenceNo: form.referenceNo,
         remarks: form.remarks,
@@ -468,13 +498,18 @@ const PaymentCreateModal = ({
         ...(form.collectedBy ? { collectedBy: form.collectedBy } : {}),
       };
 
-      await createCustomerPayment(payload);
+      if (isEdit) {
+        await updateCustomerPayment(payment._id, payload);
+        toast.success("Payment updated successfully");
+      } else {
+        await createCustomerPayment(payload);
+        toast.success("Payment recorded successfully");
+      }
 
-      toast.success("Payment recorded successfully");
       onSuccess?.();
       onClose?.();
     } catch (err) {
-      console.error("Create payment failed:", err);
+      console.error("Save payment failed:", err);
       toast.error(err?.response?.data?.message || "Failed to save payment");
     } finally {
       setLoading(false);
@@ -595,6 +630,12 @@ const PaymentCreateModal = ({
           font-weight: 600;
         }
 
+        .payment-chip.edit-mode {
+          border-color: #fde68a;
+          background: #fffbeb;
+          color: #92400e;
+        }
+
         .payment-table-wrap {
           border: 1px solid #e9edf3;
           border-radius: 12px;
@@ -690,14 +731,8 @@ const PaymentCreateModal = ({
           <div>
             <div className="d-flex align-items-center gap-2 mb-1 flex-wrap">
               <h2 className="page-title-modal mb-0">{titleText}</h2>
-              <span
-                className={`badge rounded-pill ${
-                  isView
-                    ? "bg-light text-dark border"
-                    : "bg-success-subtle text-success-emphasis border border-success-subtle"
-                }`}
-              >
-                {isView ? "View" : "Create"}
+              <span className={`badge rounded-pill ${modeBadge.cls}`}>
+                {modeBadge.label}
               </span>
             </div>
             <p className="page-subtitle-modal mb-0">{subtitleText}</p>
@@ -747,17 +782,24 @@ const PaymentCreateModal = ({
                 </span>
               )}
 
-              {outstanding !== null && isCreate && (
+              {outstanding !== null && isEditable && (
                 <span className="payment-chip">
                   <i className="bi bi-cash-stack" />
                   Outstanding: {formatMoney(outstanding)}
                 </span>
               )}
 
-              {isSalesRep && (
+              {isSalesRep && isEditable && (
                 <span className="payment-chip">
                   <i className="bi bi-lock" />
                   Sales Rep auto-filled
+                </span>
+              )}
+
+              {isEdit && (
+                <span className="payment-chip edit-mode">
+                  <i className="bi bi-pencil-square" />
+                  Editing — changes will update this payment
                 </span>
               )}
             </div>
@@ -806,7 +848,8 @@ const PaymentCreateModal = ({
                 <div className="form-floating react-select-floating">
                   <Select
                     classNamePrefix="react-select"
-                    isDisabled={isView}
+                    // In edit mode, customer is locked (payments are tied to a customer)
+                    isDisabled={isView || isEdit}
                     options={customers.map((c) => ({
                       label: `${c.customerCode} — ${c.name}`,
                       value: c._id,
@@ -824,7 +867,7 @@ const PaymentCreateModal = ({
                     menuPortalTarget={document.body}
                     placeholder=""
                   />
-                  <label>Customer</label>
+                  <label>Customer {isEdit && <span className="text-muted">(locked)</span>}</label>
                 </div>
               </div>
 
@@ -839,7 +882,7 @@ const PaymentCreateModal = ({
                     disabled
                   />
                   <label>Amount (Auto)</label>
-                  {!isView && (
+                  {isEditable && (
                     <small className="text-muted d-block mt-1">
                       Auto-calculated from allocations below.
                     </small>
@@ -863,7 +906,9 @@ const PaymentCreateModal = ({
                         ? { label: getMethodLabel(form.method), value: form.method }
                         : null
                     }
-                    onChange={(opt) => setForm((f) => ({ ...f, method: opt?.value || "" }))}
+                    onChange={(opt) =>
+                      !isView && setForm((f) => ({ ...f, method: opt?.value || "" }))
+                    }
                     styles={selectStyles}
                     menuPortalTarget={document.body}
                     placeholder=""
@@ -896,6 +941,7 @@ const PaymentCreateModal = ({
                       options={collectedByOptions}
                       value={collectedByValue}
                       onChange={(opt) =>
+                        !isView &&
                         setForm((f) => ({ ...f, collectedBy: opt?.value || "" }))
                       }
                       styles={selectStyles}
@@ -905,7 +951,9 @@ const PaymentCreateModal = ({
                     <label>Collected By</label>
                   </div>
                   <small className="text-muted d-block mt-1">
-                    {isSalesRep ? "Auto-filled from your account." : "Select a Sales Rep."}
+                    {isSalesRep
+                      ? "Auto-filled from your account."
+                      : "Select a Sales Rep."}
                   </small>
                 </div>
               )}
@@ -935,7 +983,7 @@ const PaymentCreateModal = ({
               </div>
             </div>
 
-            {loadingInvoices && isCreate ? (
+            {loadingInvoices ? (
               <div className="text-muted py-2">Loading open invoices...</div>
             ) : allocPreview && allocPreview.length ? (
               <>
@@ -957,7 +1005,9 @@ const PaymentCreateModal = ({
                         const inv = a.invoice || {};
                         const total = Number(inv.totalBalanceValue || 0);
                         const paid = Number(inv.paidAmount || 0);
-                        const balance = Number(inv.balance ?? Math.max(0, total - paid));
+                        const balance = Number(
+                          inv.balance ?? Math.max(0, total - paid)
+                        );
 
                         const raw = a.amountInput ?? "";
                         const parsed = raw === "" ? 0 : parseFloat(raw);
@@ -966,19 +1016,28 @@ const PaymentCreateModal = ({
                         return (
                           <tr key={i}>
                             <td>{inv.invoiceNo || "-"}</td>
-                            <td>{inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : "-"}</td>
+                            <td>
+                              {inv.invoiceDate
+                                ? new Date(inv.invoiceDate).toLocaleDateString()
+                                : "-"}
+                            </td>
                             <td className="text-end">{total.toFixed(2)}</td>
                             <td className="text-end">{paid.toFixed(2)}</td>
                             <td className="text-end">{balance.toFixed(2)}</td>
-                            <td className="text-end" style={{ minWidth: "140px" }}>
-                              {isCreate ? (
+                            <td
+                              className="text-end"
+                              style={{ minWidth: "140px" }}
+                            >
+                              {isEditable ? (
                                 <input
                                   type="text"
                                   inputMode="decimal"
                                   className="form-control form-control-sm text-end"
                                   placeholder="0.00"
                                   value={raw}
-                                  onChange={(e) => handleAllocAmountChange(i, e.target.value)}
+                                  onChange={(e) =>
+                                    handleAllocAmountChange(i, e.target.value)
+                                  }
                                   onBlur={() => normalizeAllocOnBlur(i)}
                                 />
                               ) : (
@@ -992,13 +1051,16 @@ const PaymentCreateModal = ({
                   </table>
                 </div>
 
-                {/* Summary bar (Grand Total only) */}
+                {/* Grand Total */}
                 <div className="payment-summary-bar">
                   <div className="d-flex justify-content-end align-items-center">
                     <div className="text-end">
                       <div className="small text-muted">Grand Total</div>
-                      <div className="fw-bold" style={{ fontSize: "1rem", color: "#111827" }}>
-                        {formatMoney(totalAllocated)}
+                      <div
+                        className="fw-bold"
+                        style={{ fontSize: "1rem", color: "#111827" }}
+                      >
+                        {formatMoney(isView ? displayAmount : totalAllocated)}
                       </div>
                     </div>
                   </div>
@@ -1021,6 +1083,8 @@ const PaymentCreateModal = ({
               <div className="small text-muted">
                 {isView
                   ? "Read-only view"
+                  : isEdit
+                  ? "Modify allocation amounts — total updates automatically."
                   : "Allocate invoice amounts and the payment total updates automatically."}
               </div>
 
@@ -1036,15 +1100,20 @@ const PaymentCreateModal = ({
                 </Button>
 
                 {!isView && (
-                  <Button className="action-btn-modal" type="submit" disabled={loading}>
+                  <Button
+                    className="action-btn-modal"
+                    type="submit"
+                    disabled={loading}
+                  >
                     {loading ? (
                       <>
-                        <span
-                          className="spinner-border spinner-border-sm me-2"
-                          role="status"
-                          aria-hidden="true"
-                        />
-                        Recording...
+                        <span className="spinner-border spinner-border-sm me-2" />
+                        {isEdit ? "Updating..." : "Recording..."}
+                      </>
+                    ) : isEdit ? (
+                      <>
+                        <i className="bi bi-pencil-square me-2" />
+                        Update Payment
                       </>
                     ) : (
                       <>
@@ -1059,7 +1128,7 @@ const PaymentCreateModal = ({
           </div>
         </form>
 
-        {/* Payment History (View mode) */}
+        {/* Payment History (View mode only) */}
         {isView && allocPreview.length > 0 && (
           <div className="payment-history-card mt-3 mb-3">
             <div className="payment-section-title mb-2">
@@ -1094,11 +1163,19 @@ const PaymentCreateModal = ({
                         <tbody>
                           {history.map((h, idx) => (
                             <tr key={idx}>
-                              <td>{h.date ? new Date(h.date).toLocaleDateString() : "-"}</td>
+                              <td>
+                                {h.date
+                                  ? new Date(h.date).toLocaleDateString()
+                                  : "-"}
+                              </td>
                               <td>{Number(h.amount || 0).toFixed(2)}</td>
                               <td>{h.method || "-"}</td>
                               <td>{h.referenceNo || "-"}</td>
-                              <td>{h.collectedBy?.name || h.collectedBy?.repCode || "-"}</td>
+                              <td>
+                                {h.collectedBy?.name ||
+                                  h.collectedBy?.repCode ||
+                                  "-"}
+                              </td>
                             </tr>
                           ))}
                         </tbody>

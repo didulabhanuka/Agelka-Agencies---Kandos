@@ -1,7 +1,9 @@
 // src/pages/sales/SalesInvoiceViewModal.jsx
-import React, { useMemo } from "react";
+import React, { useMemo, useRef } from "react";
 import { Modal, Button } from "react-bootstrap";
 import { useAuth } from "../../../context/AuthContext";
+import { useReactToPrint } from "react-to-print";
+import SalesInvoicePrintTemplate from "../../../components/print/SalesInvoicePrintTemplate";
 import "bootstrap-icons/font/bootstrap-icons.css";
 import "react-toastify/dist/ReactToastify.css";
 
@@ -31,6 +33,16 @@ const SalesInvoiceViewModal = ({
     "";
 
   if (!invoice) return null;
+
+  // -----------------------------------------
+  // Print
+  // -----------------------------------------
+  const printRef = useRef(null);
+
+  const handlePrintInvoice = useReactToPrint({
+    contentRef: printRef,
+    documentTitle: invoice?.invoiceNo || "Sales Invoice",
+  });
 
   // -----------------------------------------
   // Helpers
@@ -153,10 +165,6 @@ const SalesInvoiceViewModal = ({
           totalValueReturned: 0,
         };
 
-        // Support multiple payload shapes:
-        // old: qtyReturned
-        // current/new: qtyReturnedBase / qtyReturnedPrimary
-        // alt: baseQtyReturned / primaryQtyReturned
         const qtyReturnedLegacy = Number(it.qtyReturned || 0);
 
         const baseReturned = Number(
@@ -222,6 +230,22 @@ const SalesInvoiceViewModal = ({
   const itemCount = items.length;
   const returnCount = embeddedReturns.length;
   const paymentCount = payments.length;
+
+  // -----------------------------------------
+  // Printable payload for SalesInvoicePrintTemplate
+  // -----------------------------------------
+  const printableInvoice = useMemo(() => {
+    return {
+      ...invoice,
+      items,
+      paymentAllocations: payments,
+      remainingItems,
+      totalValue: subTotal,
+      totalReturnedValue: returnTotal,
+      totalBalanceValue: finalTotal,
+      paidAmount,
+    };
+  }, [invoice, items, payments, remainingItems, subTotal, returnTotal, finalTotal, paidAmount]);
 
   // -----------------------------------------
   // Render
@@ -450,86 +474,89 @@ const SalesInvoiceViewModal = ({
           {/* LEFT */}
           <div className="col-lg-8">
             {/* Basic info */}
-<div className="siv-card mb-3">
-  <div className="siv-card-title">
-    <i className="bi bi-info-circle" />
-    Basic Information
-  </div>
+            <div className="siv-card mb-3">
+              <div className="siv-card-title">
+                <i className="bi bi-info-circle" />
+                Basic Information
+              </div>
 
-  <div className="row g-2">
-    <div className="col-md-4">
-      <div className="small">
-        <span className="text-muted">Branch: </span>
-        <span className="fw-semibold">{invoice.branch?.name || "-"}</span>
-      </div>
-    </div>
+              <div className="row g-2">
+                <div className="col-md-4">
+                  <div className="small">
+                    <span className="text-muted">Branch: </span>
+                    <span className="fw-semibold">{invoice.branch?.name || "-"}</span>
+                  </div>
+                </div>
 
-    <div className="col-md-4">
-      <div className="small">
-        <span className="text-muted">Customer: </span>
-        <span className="fw-semibold">{invoice.customer?.name || "-"}</span>
-      </div>
-    </div>
+                <div className="col-md-4">
+                  <div className="small">
+                    <span className="text-muted">Customer: </span>
+                    <span className="fw-semibold">{invoice.customer?.name || "-"}</span>
+                  </div>
+                </div>
 
-    {isAdminOrDataEntry && (
-      <div className="col-md-4">
-        <div className="small">
-          <span className="text-muted">Sales Rep: </span>
-          <span className="fw-semibold">
-            {invoice.salesRep?.name ||
-              invoice.salesRep?.fullName ||
-              invoice.salesRep?.email ||
-              "-"}
-          </span>
-        </div>
-      </div>
-    )}
+                {isAdminOrDataEntry && (
+                  <div className="col-md-4">
+                    <div className="small">
+                      <span className="text-muted">Sales Rep: </span>
+                      <span className="fw-semibold">
+                        {invoice.salesRep?.name ||
+                          invoice.salesRep?.fullName ||
+                          invoice.salesRep?.email ||
+                          "-"}
+                      </span>
+                    </div>
+                  </div>
+                )}
 
-    <div className="col-md-4">
-      <div className="small">
-        <span className="text-muted">Invoice Date: </span>
-        <span className="fw-semibold">{formatDate(invoice.invoiceDate)}</span>
-      </div>
-    </div>
+                <div className="col-md-4">
+                  <div className="small">
+                    <span className="text-muted">Invoice Date: </span>
+                    <span className="fw-semibold">{formatDate(invoice.invoiceDate)}</span>
+                  </div>
+                </div>
 
-    <div className="col-md-4">
-      <div className="small d-flex align-items-center gap-2 flex-wrap">
-        <span className="text-muted">Payment Status:</span>
-        <span
-          className={`badge rounded-pill ${getStatusBadgeClass(
-            "payment",
-            invoice.paymentStatus
-          )}`}
-        >
-          {getPaymentStatusLabel(invoice.paymentStatus)}
-        </span>
-      </div>
-    </div>
+                <div className="col-md-4">
+                  <div className="small d-flex align-items-center gap-2 flex-wrap">
+                    <span className="text-muted">Payment Status:</span>
+                    <span
+                      className={`badge rounded-pill ${getStatusBadgeClass(
+                        "payment",
+                        invoice.paymentStatus
+                      )}`}
+                    >
+                      {getPaymentStatusLabel(invoice.paymentStatus)}
+                    </span>
+                  </div>
+                </div>
 
-    <div className="col-md-4">
-      <div className="small d-flex align-items-center gap-2 flex-wrap">
-        <span className="text-muted">Invoice Status:</span>
-        <span
-          className={`badge rounded-pill ${getStatusBadgeClass(
-            "invoice",
-            invoice.status
-          )}`}
-        >
-          {getInvoiceStatusLabel(invoice.status)}
-        </span>
-      </div>
-    </div>
+                <div className="col-md-4">
+                  <div className="small d-flex align-items-center gap-2 flex-wrap">
+                    <span className="text-muted">Invoice Status:</span>
+                    <span
+                      className={`badge rounded-pill ${getStatusBadgeClass(
+                        "invoice",
+                        invoice.status
+                      )}`}
+                    >
+                      {getInvoiceStatusLabel(invoice.status)}
+                    </span>
+                  </div>
+                </div>
 
-    {invoice.remarks && (
-      <div className="col-12">
-        <div className="small" style={{ whiteSpace: "normal", wordBreak: "break-word" }}>
-          <span className="text-muted">Remarks: </span>
-          <span className="fw-semibold">{invoice.remarks}</span>
-        </div>
-      </div>
-    )}
-  </div>
-</div>
+                {invoice.remarks && (
+                  <div className="col-12">
+                    <div
+                      className="small"
+                      style={{ whiteSpace: "normal", wordBreak: "break-word" }}
+                    >
+                      <span className="text-muted">Remarks: </span>
+                      <span className="fw-semibold">{invoice.remarks}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
 
             {/* Items */}
             <div className="siv-card">
@@ -547,94 +574,94 @@ const SalesInvoiceViewModal = ({
 
               <div className="siv-table-wrap">
                 <table className="siv-table">
-<thead>
-  <tr>
-    <th style={{ minWidth: 120 }}>Item</th>
-    <th className="text-end">Primary Sold</th>
-    <th className="text-end">Base Sold</th>
-    <th className="text-end">Price (Base)</th>
-    <th className="text-end">Price (Primary)</th>
-    <th className="text-end">Discount</th>
-    <th className="text-end">Item Total</th>
-  </tr>
-</thead>
+                  <thead>
+                    <tr>
+                      <th style={{ minWidth: 120 }}>Item</th>
+                      <th className="text-end">Primary Sold</th>
+                      <th className="text-end">Base Sold</th>
+                      <th className="text-end">Price (Base)</th>
+                      <th className="text-end">Price (Primary)</th>
+                      <th className="text-end">Discount</th>
+                      <th className="text-end">Item Total</th>
+                    </tr>
+                  </thead>
 
-<tbody>
-  {items.length ? (
-    items.map((row, index) => {
-      const key = String(row.item?._id || row.item || "");
+                  <tbody>
+                    {items.length ? (
+                      items.map((row, index) => {
+                        const key = String(row.item?._id || row.item || "");
 
-      const returned = returnedByItem.get(key) || {
-        qtyReturned: 0,
-        baseQtyReturned: 0,
-        primaryQtyReturned: 0,
-        totalValueReturned: 0,
-      };
+                        const returned = returnedByItem.get(key) || {
+                          qtyReturned: 0,
+                          baseQtyReturned: 0,
+                          primaryQtyReturned: 0,
+                          totalValueReturned: 0,
+                        };
 
-      // Original sold values from invoice line
-      const soldBase = Number(row.baseQty || 0);
-      const soldPrimary =
-        Number(row.primaryQty || 0) ||
-        (soldBase === 0 ? Number(row.qty || 0) : 0);
+                        // Original sold values from invoice line
+                        const soldBase = Number(row.baseQty || 0);
+                        const soldPrimary =
+                          Number(row.primaryQty || 0) ||
+                          (soldBase === 0 ? Number(row.qty || 0) : 0);
 
-      const priceBase = Number(row.sellingPriceBase || 0);
-      const pricePrimary = Number(row.sellingPricePrimary || 0);
-      const discount = Number(row.discountPerUnit || 0);
+                        const priceBase = Number(row.sellingPriceBase || 0);
+                        const pricePrimary = Number(row.sellingPricePrimary || 0);
+                        const discount = Number(row.discountPerUnit || 0);
 
-      // Use backend totalSellingValue as requested
-      const lineTotal = Number(row.totalSellingValue || 0);
+                        // Use backend totalSellingValue as requested
+                        const lineTotal = Number(row.totalSellingValue || 0);
 
-      const itemCode = row.item?.itemCode || "";
-      const itemName = row.item?.name || "-";
+                        const itemCode = row.item?.itemCode || "";
+                        const itemName = row.item?.name || "-";
 
-      const hasReturns =
-        Number(returned.baseQtyReturned || 0) > 0 ||
-        Number(returned.primaryQtyReturned || 0) > 0 ||
-        Number(returned.qtyReturned || 0) > 0;
+                        const hasReturns =
+                          Number(returned.baseQtyReturned || 0) > 0 ||
+                          Number(returned.primaryQtyReturned || 0) > 0 ||
+                          Number(returned.qtyReturned || 0) > 0;
 
-      return (
-        <tr key={index}>
-          <td>
-            <div className="fw-semibold">{itemName}</div>
+                        return (
+                          <tr key={index}>
+                            <td>
+                              <div className="fw-semibold">{itemName}</div>
 
-            <div className="small text-muted d-flex align-items-center gap-2 flex-wrap">
-              {itemCode && <span>{itemCode}</span>}
+                              <div className="small text-muted d-flex align-items-center gap-2 flex-wrap">
+                                {itemCode && <span>{itemCode}</span>}
 
-              {hasReturns && (
-                <span className="badge rounded-pill bg-warning-subtle text-warning-emphasis border border-warning-subtle">
-                  Has Returns
-                </span>
-              )}
-            </div>
-          </td>
+                                {hasReturns && (
+                                  <span className="badge rounded-pill bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                                    Has Returns
+                                  </span>
+                                )}
+                              </div>
+                            </td>
 
-          <td className="text-end">{soldPrimary || "-"}</td>
-          <td className="text-end">{soldBase || "-"}</td>
+                            <td className="text-end">{soldPrimary || "-"}</td>
+                            <td className="text-end">{soldBase || "-"}</td>
 
-          <td className="text-end">
-            {priceBase > 0 ? formatCurrency(priceBase) : "-"}
-          </td>
+                            <td className="text-end">
+                              {priceBase > 0 ? formatCurrency(priceBase) : "-"}
+                            </td>
 
-          <td className="text-end">
-            {pricePrimary > 0 ? formatCurrency(pricePrimary) : "-"}
-          </td>
+                            <td className="text-end">
+                              {pricePrimary > 0 ? formatCurrency(pricePrimary) : "-"}
+                            </td>
 
-          <td className="text-end">
-            {discount > 0 ? formatCurrency(discount) : "-"}
-          </td>
+                            <td className="text-end">
+                              {discount > 0 ? formatCurrency(discount) : "-"}
+                            </td>
 
-          <td className="text-end fw-bold">{formatCurrency(lineTotal)}</td>
-        </tr>
-      );
-    })
-  ) : (
-    <tr>
-      <td colSpan={7} className="text-center text-muted py-3">
-        No items found.
-      </td>
-    </tr>
-  )}
-</tbody>
+                            <td className="text-end fw-bold">{formatCurrency(lineTotal)}</td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan={7} className="text-center text-muted py-3">
+                          No items found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
                 </table>
               </div>
 
@@ -787,12 +814,17 @@ const SalesInvoiceViewModal = ({
 
         {/* FOOTER */}
         <div className="siv-footer">
-          <div className="d-flex justify-content-end">
-            <Button className="action-btn-modal" onClick={onClose}>
-              <i className="bi bi-x-circle me-2" />
-              Close
+          <div className="d-flex justify-content-between align-items-center">
+            <Button type="button" variant="outline-secondary" onClick={handlePrintInvoice}>
+              <i className="bi bi-printer me-2" />
+              Print
             </Button>
           </div>
+        </div>
+
+        {/* Hidden print template */}
+        <div style={{ position: "absolute", left: "-99999px", top: 0 }}>
+          <SalesInvoicePrintTemplate ref={printRef} invoice={printableInvoice} />
         </div>
       </Modal.Body>
     </Modal>

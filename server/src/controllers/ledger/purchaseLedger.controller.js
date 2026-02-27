@@ -1,4 +1,4 @@
-// controllers/inventory/purchaseLedger.controller.js
+// controllers/ledger/purchaseLedger.controller.js
 const { asyncHandler } = require("../../utils/asyncHandler");
 const { ApiError } = require("../../middlewares/error");
 const Branch = require("../../models/inventorySettings/branch.model");
@@ -9,6 +9,7 @@ const {
   getPurchaseSnapshot,
 } = require("../../services/ledger/purchaseLedger.service");
 
+// Normalizes query date strings into inclusive day-bound Date objects.
 const normalizeDateRange = (from, to) => {
   let fromDate = null, toDate = null;
   if (from) { fromDate = new Date(from); fromDate.setHours(0, 0, 0, 0); }
@@ -16,13 +17,15 @@ const normalizeDateRange = (from, to) => {
   return { fromDate, toDate };
 };
 
+// Resolves effective sales rep scope (forced self-scope for SalesRep actors, optional query scope for staff).
 function resolveSalesRepScope(req) {
-  // SalesRep actor => force own
+  // SalesRep actor is always restricted to their own records.
   if (req.authActor?.actorType === "SalesRep") return String(req.authActor.id);
-  // staff => allow optional query.salesRep
+  // Staff users may optionally filter by salesRep.
   return req.query.salesRep || null;
 }
 
+// GET /ledger/purchases - Returns purchase ledger rows filtered by branch, supplier, salesRep scope, and date range.
 exports.list = asyncHandler(async (req, res) => {
   const { branch, supplier, from, to } = req.query;
 
@@ -46,6 +49,7 @@ exports.list = asyncHandler(async (req, res) => {
   res.json(rows);
 });
 
+// GET /ledger/purchases/summary/suppliers - Returns supplier-wise purchase summary for selected filters.
 exports.summaryBySupplier = asyncHandler(async (req, res) => {
   const { branch, from, to } = req.query;
 
@@ -68,6 +72,7 @@ exports.summaryBySupplier = asyncHandler(async (req, res) => {
   res.json(summary);
 });
 
+// GET /ledger/purchases/summary/items - Returns item-wise purchase summary for selected filters.
 exports.summaryByItem = asyncHandler(async (req, res) => {
   const { branch, from, to } = req.query;
 
@@ -90,6 +95,7 @@ exports.summaryByItem = asyncHandler(async (req, res) => {
   res.json(summary);
 });
 
+// GET /ledger/purchases/snapshot - Returns aggregated purchase snapshot (summary + breakdowns) for selected filters.
 exports.snapshot = asyncHandler(async (req, res) => {
   const { branch, supplier, from, to } = req.query;
   const { fromDate, toDate } = normalizeDateRange(from, to);

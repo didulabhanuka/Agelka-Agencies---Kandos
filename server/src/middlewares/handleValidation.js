@@ -2,23 +2,18 @@
 const { validationResult } = require('express-validator');
 const { ApiError } = require('./error'); // adjust path if needed
 
-/**
- * Centralized validation middleware.
- * - Collects express-validator errors.
- * - Wraps them in ApiError for consistent global handling.
- * - Keeps payload minimal and secure (no raw stack traces).
- */
+// Collects express-validator errors and forwards a standardized 400 ApiError when validation fails.
 function handleValidation(req, _res, next) {
   const errors = validationResult(req);
 
   if (!errors.isEmpty()) {
-    // Format errors cleanly and predictably
+    // Map validator errors into a predictable field/message shape for API clients.
     const details = errors.array().map(e => ({
       field: e.path,
       message: e.msg,
     }));
 
-    // Pass to global error handler
+    // Forward validation failure to the global error handler.
     return next(new ApiError(400, 'Validation failed', details));
   }
 

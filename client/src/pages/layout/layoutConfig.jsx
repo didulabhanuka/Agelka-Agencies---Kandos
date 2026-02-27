@@ -21,6 +21,12 @@ import CustomerPaymentsDashboard from '../finance/CustomerPaymentsDashboard';
 import DashboardWrapper from '@/pages/dashboard/DashboardWrapper';
 
 import StockAdjustmentDashboard from '@/pages/inventory/stock-adjustment/StockAdjustmentDashboard';
+import CurrentStockDashboard from '../inventory/CurrentStockDashboard';
+
+import TourUnloadReport from '../reports/TourUnloadReport';
+import RemainingCollectionReport from '../reports/RemainingCollectionReport';
+
+import CleanerDashboard from '../settings/CleanerDashboard';
 
 // --------------------------------------------
 // ENCODED KEY MAPPING (C2)
@@ -34,6 +40,7 @@ export const KEY_MAP = {
   "inventory-settings": "iset",
   "settings": "set",
 
+  "current-stock" : "stc",
   "products": "prd",
   "stock-adjustment": "adj",
 
@@ -54,10 +61,15 @@ export const KEY_MAP = {
   "product-groups": "grp",
   "product-types": "typ",
   "unitconfig": "unit",
+
+  "tour-unload": "tur",
+  "remaining-collection": "rcr",
+
+  "database-cleaner": "dbcln",
 };
 
 // --------------------------------------------
-// NAV ITEMS — FULL ACCESS FOR NOW
+// NAV ITEMS — FULL ACCESS FOR NOW database-cleaner
 // --------------------------------------------
 
 export const navItems = [
@@ -76,6 +88,7 @@ export const navItems = [
     icon: 'bi bi-box-seam-fill',
     rolesAllowed: ["Admin", "DataEntry", "SalesRep"],
     subtabs: [
+      { key: 'current-stock', label: 'Current Stock', rolesAllowed: ["Admin", "DataEntry", "SalesRep"], component: CurrentStockDashboard },
       { key: 'products', label: 'Products', rolesAllowed: ["Admin", "DataEntry", "SalesRep"], component: ProductsDashboard },
       { key: 'stock-adjustment', label: 'Stock Adjustment', rolesAllowed: ["Admin", "DataEntry", "SalesRep"], component: StockAdjustmentDashboard },
     ],
@@ -137,16 +150,25 @@ export const navItems = [
     ],
   },
   {
-    type: 'tab',
+    type: 'dropdown',
+    key: 'reports',
+    label: 'Reports',
+    icon: 'bi bi-printer-fill',
+    rolesAllowed: ["Admin", "DataEntry", "SalesRep"],
+    subtabs: [
+      { key: 'tour-unload', label: 'Tour Unload Report', rolesAllowed: ["Admin", "DataEntry", "SalesRep"], component: TourUnloadReport },
+      { key: 'remaining-collection', label: 'Remaining Collection Report', rolesAllowed: ["Admin", "DataEntry", "SalesRep"], component: RemainingCollectionReport },
+    ],
+  },
+  {
+    type: 'dropdown',
     key: 'settings',
     label: 'Settings',
-    rolesAllowed: ["Admin", "DataEntry", "SalesRep"],
-    component: () => (
-      <>
-        <h2>Settings</h2>
-        <p>Manage your settings here.</p>
-      </>
-    ),
+    icon: 'bi bi-gear-fill',
+    rolesAllowed: ["Admin"],
+    subtabs: [
+      { key: 'database-cleaner', label: 'Clean Data', rolesAllowed: ["Admin"], component: CleanerDashboard },
+    ],
   },
 ];
 

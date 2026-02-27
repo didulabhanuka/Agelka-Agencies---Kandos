@@ -28,21 +28,6 @@ function generateInvoiceNo() {
   return `INV-${yyyy}-${mm}-${dd}-${rand}`;
 }
 
-// Qty formatter for stock helper
-function formatQtyOnHand(qtyOnHand, baseUom, primaryUom) {
-  if (!qtyOnHand) return "0";
-
-  const baseQty = Number(qtyOnHand.baseQty || 0);
-  const primaryQty = Number(qtyOnHand.primaryQty || 0);
-  const parts = [];
-
-  if (primaryQty > 0) parts.push(`${primaryQty} ${primaryUom || ""}`.trim());
-  if (baseQty > 0) parts.push(`${baseQty} ${baseUom || ""}`.trim());
-
-  if (!parts.length) return "0";
-  return parts.join(" + ");
-}
-
 // Currency formatter
 function formatCurrency(value) {
   return `Rs. ${Number(value || 0).toFixed(2)}`;
@@ -213,10 +198,13 @@ const SalesInvoiceCreateModal = ({
     }
   }, [show, isSalesRep, loggedInSalesRepId]);
 
-  // Load available items for branch
-  const loadAvailableItemsForBranch = async (branchId) => {
+  // Load available items for branch AND salesRep
+  const loadAvailableItemsForBranch = async (branchId, salesRepId = null) => {
     try {
-      const res = await listAvailableSaleItems(branchId);
+      const params = { branch: branchId };
+      if (salesRepId) params.salesRep = salesRepId;
+
+      const res = await listAvailableSaleItems(params);
       const rows = res?.data || [];
 
       const mapped = rows.map((item) => ({
@@ -225,7 +213,7 @@ const SalesInvoiceCreateModal = ({
         itemId: item.itemId,
         itemCode: item.itemCode,
         itemName: item.itemName,
-        qtyOnHand: item.qtyOnHandRaw || { baseQty: 0, primaryQty: 0 },
+        qtyDisplay: item.qtyDisplay,
         sellingPriceBase: Number(item.sellingPriceBase ?? 0),
         sellingPricePrimary: Number(item.sellingPricePrimary ?? 0),
         avgCostBase: Number(item.avgCostBase ?? 0),
@@ -240,7 +228,7 @@ const SalesInvoiceCreateModal = ({
       const stockMap = {};
       rows.forEach((item) => {
         stockMap[item.itemId] = {
-          qtyOnHand: item.qtyOnHandRaw || { baseQty: 0, primaryQty: 0 },
+          qtyDisplay: item.qtyDisplay,
           baseUom: item.baseUom,
           primaryUom: item.primaryUom,
         };
@@ -301,7 +289,9 @@ const SalesInvoiceCreateModal = ({
 
     const branchId = selectedInvoice.branch?._id;
     if (branchId) {
-      loadAvailableItemsForBranch(branchId);
+      // Pass both branch and salesRep when populating edit/view
+      const repId = selectedInvoice.salesRep?._id || selectedInvoice.salesRep || null;
+      loadAvailableItemsForBranch(branchId, repId);
     }
   }, [show, isView, isEdit, selectedInvoice]);
 
@@ -407,24 +397,16 @@ const SalesInvoiceCreateModal = ({
       const meta = itemsMaster.find((it) => it.value === i.item);
       const hasBaseUom = !!meta?.baseUom;
 
-      const baseQty = +i.baseQty || 0;
-      const primaryQty = +i.primaryQty || 0;
-
-      const sellingPriceBase = hasBaseUom && +i.sellingPriceBase > 0 ? +i.sellingPriceBase : null;
-      const sellingPricePrimary = +i.sellingPricePrimary > 0 ? +i.sellingPricePrimary : null;
-
-      const discountPerUnit =
-        i.discountPerUnit === "" || i.discountPerUnit == null || +i.discountPerUnit === 0
-          ? null
-          : +i.discountPerUnit;
-
       return {
         item: i.item,
-        baseQty,
-        primaryQty,
-        sellingPriceBase,
-        sellingPricePrimary,
-        discountPerUnit,
+        baseQty: +i.baseQty || 0,
+        primaryQty: +i.primaryQty || 0,
+        sellingPriceBase: hasBaseUom ? +i.sellingPriceBase : null,
+        sellingPricePrimary: +i.sellingPricePrimary > 0 ? +i.sellingPricePrimary : null,
+        discountPerUnit:
+          i.discountPerUnit === "" || i.discountPerUnit == null || +i.discountPerUnit === 0
+            ? null
+            : +i.discountPerUnit,
       };
     });
 
@@ -438,6 +420,8 @@ const SalesInvoiceCreateModal = ({
       totalValue,
       ...(isAdminOrDataEntry ? { salesRep: form.salesRep } : {}),
     };
+
+    console.log("Final Invoice Payload:", payload);
 
     try {
       setLoading(true);
@@ -556,12 +540,12 @@ const SalesInvoiceCreateModal = ({
   const selectedBranchName = branches.find((b) => b._id === form.branch)?.name || "-";
 
   const selectedSalesRepLabel =
-  isSalesRep
-    ? user?.name || "Sales Rep"
-    : salesReps.find((sr) => String(sr._id) === String(form.salesRep))?.name ||
-      salesReps.find((sr) => String(sr._id) === String(form.salesRep))?.fullName ||
-      salesReps.find((sr) => String(sr._id) === String(form.salesRep))?.email ||
-      "Not selected";
+    isSalesRep
+      ? user?.name || "Sales Rep"
+      : salesReps.find((sr) => String(sr._id) === String(form.salesRep))?.name ||
+        salesReps.find((sr) => String(sr._id) === String(form.salesRep))?.fullName ||
+        salesReps.find((sr) => String(sr._id) === String(form.salesRep))?.email ||
+        "Not selected";
 
   return (
     <Modal
@@ -889,7 +873,9 @@ const SalesInvoiceCreateModal = ({
                       setItemsMaster([]);
 
                       if (branchId) {
-                        await loadAvailableItemsForBranch(branchId);
+                        // Pass the current salesRep along with the new branch
+                        const repId = isSalesRep ? loggedInSalesRepId : form.salesRep || null;
+                        await loadAvailableItemsForBranch(branchId, repId);
                       }
                     }}
                     styles={selectStyles}
@@ -899,6 +885,46 @@ const SalesInvoiceCreateModal = ({
                   <label>Branch</label>
                 </div>
               </div>
+
+              {/* Sales rep */}
+              {(isAdminOrDataEntry || isSalesRep) && (
+                <div className="col-md-6">
+                  <div className="form-floating react-select-floating">
+                    <Select
+                      classNamePrefix="react-select"
+                      isDisabled={isView || isSalesRep}
+                      isClearable={!isSalesRep}
+                      options={
+                        isAdminOrDataEntry
+                          ? salesReps.map((sr) => ({
+                              label: sr.name || sr.fullName || sr.email || "Sales Rep",
+                              value: sr._id,
+                            }))
+                          : [{ label: user?.name || "Sales Rep", value: loggedInSalesRepId }]
+                      }
+                      value={selectedSalesRepOption}
+                      onChange={(opt) => {
+                        const newRepId = opt ? opt.value : "";
+                        setForm((p) => ({ ...p, salesRep: newRepId }));
+
+                        // Reload items when sales rep changes (only if a branch is already selected)
+                        if (form.branch) {
+                          setStockInfo({});
+                          setItemsMaster([]);
+                          loadAvailableItemsForBranch(form.branch, newRepId || null);
+                        }
+                      }}
+                      styles={selectStyles}
+                      menuPortalTarget={document.body}
+                      placeholder=""
+                    />
+                    <label>Sales Rep</label>
+                  </div>
+                  <small className="text-muted">
+                    {isSalesRep ? "Auto-filled from your account." : "Select a Sales Rep."}
+                  </small>
+                </div>
+              )}
 
               {/* Customer */}
               <div className="col-md-6">
@@ -940,41 +966,6 @@ const SalesInvoiceCreateModal = ({
                   </div>
                 )}
               </div>
-
-              {/* Sales rep */}
-              {(isAdminOrDataEntry || isSalesRep) && (
-                <div className="col-md-6">
-                  <div className="form-floating react-select-floating">
-                    <Select
-                      classNamePrefix="react-select"
-                      isDisabled={isView || isSalesRep}
-                      isClearable={!isSalesRep}
-                      options={
-                        isAdminOrDataEntry
-                          ? salesReps.map((sr) => ({
-                              label: sr.name || sr.fullName || sr.email || "Sales Rep",
-                              value: sr._id,
-                            }))
-                          : [{ label: user?.name || "Sales Rep", value: loggedInSalesRepId }]
-                      }
-                      value={selectedSalesRepOption}
-                      onChange={(opt) =>
-                        setForm((p) => ({
-                          ...p,
-                          salesRep: opt ? opt.value : "",
-                        }))
-                      }
-                      styles={selectStyles}
-                      menuPortalTarget={document.body}
-                      placeholder=""
-                    />
-                    <label>Sales Rep</label>
-                  </div>
-                  <small className="text-muted">
-                    {isSalesRep ? "Auto-filled from your account." : "Select a Sales Rep."}
-                  </small>
-                </div>
-              )}
 
               {/* Invoice date */}
               <div className="col-md-6">
@@ -1026,24 +1017,6 @@ const SalesInvoiceCreateModal = ({
                 <i className="bi bi-box-seam" />
                 Items & Pricing
               </div>
-
-              {/* {!isView && (
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  style={{
-                    border: "1px solid #dbeafe",
-                    background: "#eff6ff",
-                    color: "#1d4ed8",
-                    borderRadius: 10,
-                    fontWeight: 600,
-                  }}
-                  onClick={addItem}
-                >
-                  <i className="bi bi-plus-lg me-1" />
-                  Add Row
-                </button>
-              )} */}
             </div>
 
             <div className="invoice-table-wrap">
@@ -1082,13 +1055,7 @@ const SalesInvoiceCreateModal = ({
                     const lineTotal = Number(row.lineTotal || 0);
                     const stockMeta = row.item ? stockInfo[row.item] : null;
 
-                    const formattedStock = stockMeta
-                      ? formatQtyOnHand(
-                          stockMeta.qtyOnHand,
-                          stockMeta.baseUom,
-                          stockMeta.primaryUom
-                        )
-                      : null;
+                    const formattedStock = stockMeta ? stockMeta.qtyDisplay : null;
 
                     const meta = row.item ? itemsMaster.find((it) => it.value === row.item) : null;
                     const hasBaseUom = !!meta?.baseUom;
@@ -1116,19 +1083,26 @@ const SalesInvoiceCreateModal = ({
                             onChange={(opt) => {
                               if (isView) return;
 
-                              if (opt) {
-                                updateItemRow(i, {
-                                  item: opt.value,
-                                  sellingPriceBase: Number(opt.sellingPriceBase || 0),
-                                  sellingPricePrimary: Number(opt.sellingPricePrimary || 0),
-                                  baseQty: 0,
-                                  primaryQty: 0,
-                                  discountPerUnit: 0,
-                                });
-                              } else {
-                                updateItemRow(i, buildEmptyItemRow());
+                              console.log("Selected option:", opt);
+
+                              const selectedItem = itemsMaster.find((item) => item.value === opt?.value);
+                              console.log("Found selected item in itemsMaster:", selectedItem);
+
+                              if (!selectedItem) {
+                                console.error("Item not found:", opt?.value);
+                                return;
                               }
+
+                              updateItemRow(i, {
+                                item: opt.value,
+                                sellingPriceBase: Number(selectedItem.sellingPriceBase || 0),
+                                sellingPricePrimary: Number(selectedItem.sellingPricePrimary || 0),
+                                baseQty: 0,
+                                primaryQty: 0,
+                                discountPerUnit: 0,
+                              });
                             }}
+
                             styles={{
                               ...selectStyles,
                               control: (base, state) => ({
@@ -1299,16 +1273,6 @@ const SalesInvoiceCreateModal = ({
               </div>
 
               <div className="d-flex align-items-center gap-2">
-                {/* <Button
-                  type="button"
-                  variant="light"
-                  onClick={onClose}
-                  disabled={loading}
-                  style={{ border: "1px solid #e5e7eb" }}
-                >
-                  {isView ? "Close" : "Cancel"}
-                </Button> */}
-
                 {!isView && (
                   <Button type="submit" className="action-btn-modal" disabled={loading}>
                     {loading ? (

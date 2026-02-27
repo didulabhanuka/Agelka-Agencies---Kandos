@@ -1,44 +1,24 @@
-// // models/inventory/salesRepStock.model.js
-// const { Schema, model, Types } = require("mongoose");
-
-// const salesRepStockSchema = new Schema(
-//   {
-//     salesRep: { type: Types.ObjectId, ref: "SalesRep", required: true, index: true },
-//     item: { type: Types.ObjectId, ref: "Item", required: true, index: true },
-//     qtyOnHand: { type: Number, default: 0 },
-//   },
-//   { timestamps: true }
-// );
-
-// // one row per (salesRep, item)
-// salesRepStockSchema.index({ salesRep: 1, item: 1 }, { unique: true });
-
-// module.exports = model("SalesRepStock", salesRepStockSchema);
-
-
-
+// models/inventory/saleRepStock.model.js
 const { Schema, model, Types } = require("mongoose");
 
-const salesRepStockSchema = new Schema(
-  {
-    salesRep: { type: Types.ObjectId, ref: "SalesRep", required: true, index: true },
-    item: { type: Types.ObjectId, ref: "Item", required: true, index: true },
+// Stores on-hand stock and stock value for each (salesRep, item) pair.
+const salesRepStockSchema = new Schema({
+  salesRep: { type: Types.ObjectId, ref: "SalesRep", required: true, index: true },
+  item: { type: Types.ObjectId, ref: "Item", required: true, index: true },
 
-    // Quantities in Primary and Base UOM
-    qtyOnHandPrimary: { type: Number, default: 0 }, // Stock in Primary UOM
-    qtyOnHandBase: { type: Number, default: 0 },    // Stock in Base UOM
+  // Quantities tracked in both primary and base UOMs.
+  qtyOnHandPrimary: { type: Number, default: 0 },
+  qtyOnHandBase: { type: Number, default: 0 },
 
-    // The factor to convert Primary UOM to Base UOM (should align with the Item's factorToBase)
-    factorToBase: { type: Number, default: 1 },  // Factor for UOM conversion from Primary to Base
+  // Conversion factor from primary UOM to base UOM (aligned with Item.factorToBase).
+  factorToBase: { type: Number, default: 1 },
 
-    // Additional information about the stock value
-    stockValueBase: { type: Number, default: 0 },   // Value in Base UOM
-    stockValuePrimary: { type: Number, default: 0 }, // Value in Primary UOM
-  },
-  { timestamps: true }
-);
+  // Cached stock values in base and primary terms.
+  stockValueBase: { type: Number, default: 0 },
+  stockValuePrimary: { type: Number, default: 0 },
+}, { timestamps: true });
 
-// one row per (salesRep, item) pair
+// Enforce a single stock row per sales rep and item combination.
 salesRepStockSchema.index({ salesRep: 1, item: 1 }, { unique: true });
 
 module.exports = model("SalesRepStock", salesRepStockSchema);

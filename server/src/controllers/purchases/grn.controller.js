@@ -4,12 +4,13 @@ const { ApiError } = require("../../middlewares/error");
 const { logAction } = require("../../services/audit/audit.service");
 const svc = require("../../services/purchases/grn.service");
 
+// Returns normalized actor context used for service-layer authorization and ownership rules.
 const actor = (req) => ({
   actorType: req.authActor?.actorType,
   actorId: req.authActor?.id,
 });
 
-// CREATE GRN (Admin/DataEntry/SalesRep)
+// POST /purchases/grn - Creates a GRN (drafted as waiting_for_approval) for User or SalesRep actors.
 exports.create = asyncHandler(async (req, res) => {
   const result = await svc.createGRN(
     {
@@ -19,6 +20,7 @@ exports.create = asyncHandler(async (req, res) => {
     actor(req)
   );
 
+  // Write audit log for GRN creation.
   await logAction({
     userId: req.authActor?.id,
     action: "transactions.grn.create",
@@ -38,12 +40,12 @@ exports.create = asyncHandler(async (req, res) => {
   res.status(201).json({ message: "✅ GRN created (waiting_for_approval).", grn: result });
 });
 
-// GET SINGLE GRN (scoped by middleware in list routes; still safe-check here)
+// GET /purchases/grn/:id - Returns a single GRN with an additional ownership check for SalesRep actors.
 exports.get = asyncHandler(async (req, res) => {
   const doc = await svc.getGRN(req.params.id);
   if (!doc) throw new ApiError(404, "GRN not found");
 
-  // SalesRep can only view own
+  // Enforce SalesRep ownership when a sales rep requests a single GRN.
   if (req.authActor?.actorType === "SalesRep") {
     if (String(doc.salesRep?._id || doc.salesRep) !== String(req.authActor.id)) {
       throw new ApiError(403, "Forbidden");
@@ -53,36 +55,36 @@ exports.get = asyncHandler(async (req, res) => {
   res.json(doc);
 });
 
-// LIST GRNs (Admin/DataEntry all, SalesRep own via scopeFilter)
-// LIST GRNs (Admin/DataEntry all, SalesRep own via scopeFilter)
+// GET /purchases/grn - Lists GRNs using route scope filter plus optional supplier/status/branch/salesRep filters.
 exports.list = asyncHandler(async (req, res) => {
   console.log('Request Headers:', req.headers);
   const { supplier, status, limit, branch } = req.query;
 
-  const query = { ...req.scopeFilter };  // Ensures the scope filter is applied
+  // Start from middleware-provided scope filter (e.g., SalesRep own records only).
+  const query = { ...req.scopeFilter };
   if (supplier) query.supplier = supplier;
   if (status) query.status = status;
   if (branch) query.branch = branch;
-  if (req.query.salesRep) query.salesRep = req.query.salesRep;  // Add SalesRep filter here
+  if (req.query.salesRep) query.salesRep = req.query.salesRep;
 
   const docs = await svc.listGRN(query, { limit: Number(limit) || 100 });
   res.json(docs);
 });
 
-
-// SUMMARY
+// GET /purchases/grn/summary - Returns GRN summary metrics.
 exports.summary = asyncHandler(async (_req, res) => {
   const data = await svc.getGRNSummary();
   res.json(data);
 });
 
-// APPROVE GRN (Admin/DataEntry only)
+// POST /purchases/grn/:id/approve - Approves a GRN (User actors only) and posts ledger impacts.
 exports.approve = asyncHandler(async (req, res) => {
   if (req.authActor?.actorType !== "User") throw new ApiError(403, "Forbidden");
 
   const updatedGRN = await svc.approveGRN(req.params.id, req.authActor.id);
   if (!updatedGRN) throw new ApiError(404, "GRN not found");
 
+  // Write audit log for GRN approval.
   await logAction({
     userId: req.authActor.id,
     action: "transactions.grn.approve",
@@ -100,10 +102,11 @@ exports.approve = asyncHandler(async (req, res) => {
   res.json({ message: "✅ GRN approved — ledgers updated.", grn: updatedGRN });
 });
 
-// UPDATE GRN (Admin/DataEntry/SalesRep, SalesRep only own)
+// PUT /purchases/grn/:id - Updates a GRN with actor-based authorization handled in the service layer.
 exports.update = asyncHandler(async (req, res) => {
   const updated = await svc.updateGRN(req.params.id, req.body, actor(req));
 
+  // Write audit log for GRN update.
   await logAction({
     userId: req.authActor?.id,
     action: "transactions.grn.update",
@@ -122,10 +125,11 @@ exports.update = asyncHandler(async (req, res) => {
   res.json({ message: "📝 GRN updated successfully.", grn: updated });
 });
 
-// DELETE GRN (Admin/DataEntry/SalesRep, SalesRep only own)
+// DELETE /purchases/grn/:id - Deletes a GRN with actor-based authorization handled in the service layer.
 exports.delete = asyncHandler(async (req, res) => {
   const result = await svc.deleteGRN(req.params.id, actor(req));
 
+  // Write audit log for GRN deletion.
   await logAction({
     userId: req.authActor?.id,
     action: "transactions.grn.delete",

@@ -1,13 +1,11 @@
-const Brand = require('../../models/inventorySettings/brand.model');
-const ProductGroup = require('../../models/inventorySettings/productGroup.model');
+const Brand = require("../../models/inventorySettings/brand.model");
+const ProductGroup = require("../../models/inventorySettings/productGroup.model");
 
-
-//-------------------- [ Generic List Query with Pagination & Search ] ----------------------
+// Build a reusable paginated list query with optional text search for common master-data models.
 function withCommonListQuery(Model, fields = {}) {
   return async (filter = {}, { page = 1, limit = 50, q } = {}) => {
     const where = { ...filter };
 
-    //-------------------- [ Search by Query String (brandCode, name, description) ] ----------------------
     if (q) {
       where.$or = [
         { brandCode: { $regex: q, $options: "i" } },
@@ -16,94 +14,59 @@ function withCommonListQuery(Model, fields = {}) {
       ];
     }
 
-    return Model.find(where, fields)
-      .skip((page - 1) * limit)
-      .limit(Number(limit))
-      .lean();
+    return Model.find(where, fields).skip((page - 1) * limit).limit(Number(limit)).lean();
   };
 }
 
-//-------------------- [ Brand List Query Using Common Function ] ----------------------
+// List brands using the shared paginated/search query helper.
 const list = withCommonListQuery(Brand);
 
-
-//-------------------- [ Create a New Brand ] ----------------------
+// Create and return a new brand document.
 async function create(payload) {
   const brand = await Brand.create(payload);
   return brand.toObject();
 }
 
-
-//-------------------- [ Get Brand by ID with Groups ] ----------------------
+// Get a brand by ID with linked product groups populated.
 async function get(id) {
-  return Brand.findById(id)
-    .populate("groups", "groupCode name")
-    .lean();
+  return Brand.findById(id).populate("groups", "groupCode name").lean();
 }
 
-
-//-------------------- [ Update Brand by ID with Groups ] ----------------------
+// Update a brand by ID and return the populated result.
 async function update(id, payload) {
-  return Brand.findByIdAndUpdate(id, payload, { new: true })
-    .populate("groups", "groupCode name")
-    .lean();
+  return Brand.findByIdAndUpdate(id, payload, { new: true }).populate("groups", "groupCode name").lean();
 }
 
-
-//-------------------- [ Delete Brand and Unlink Groups ] ----------------------
+// Delete a brand and unlink the deleted brand from related product groups.
 async function remove(id) {
   const brand = await Brand.findByIdAndDelete(id).lean();
 
   if (brand?.groups?.length) {
-    await ProductGroup.updateMany(
-      { _id: { $in: brand.groups } },
-      { $unset: { brand: "" } }
-    );
+    await ProductGroup.updateMany({ _id: { $in: brand.groups } }, { $unset: { brand: "" } });
   }
 
   return brand;
 }
 
-
-//-------------------- [ Find or Create Brand by Code or Name ] ----------------------
+// Find an existing brand by code or name, or create one if it does not exist.
 async function findOrCreateByNameOrCode({ brandCode, name, description, status }) {
-  if (!brandCode && !name) {
-    throw Object.assign(new Error("brandCode or name required"), { status: 400 });
-  }
+  if (!brandCode && !name) throw Object.assign(new Error("brandCode or name required"), { status: 400 });
 
   const query = brandCode ? { brandCode } : { name };
   let doc = await Brand.findOne(query).lean();
 
   if (!doc) {
     const code = brandCode || name.toUpperCase().replace(/\s+/g, "_");
-    doc = await Brand.create({
-      brandCode: code,
-      name: name || code,
-      description,
-      status,
-    }).then(d => d.toObject());
+    doc = await Brand.create({ brandCode: code, name: name || code, description, status }).then((d) => d.toObject());
   }
 
   return doc;
 }
 
-
-//-------------------- [ Attach Product Group to Brand ] ----------------------
+// Attach a product group to a brand without creating duplicate links.
 async function attachGroupToBrand(brandId, groupId) {
   if (!brandId || !groupId) return;
-
-  await Brand.findByIdAndUpdate(
-    brandId,
-    { $addToSet: { groups: groupId } }
-  );
+  await Brand.findByIdAndUpdate(brandId, { $addToSet: { groups: groupId } });
 }
 
-module.exports = {
-  list,
-  create,
-  get,
-  update,
-  remove,
-  findOrCreateByNameOrCode,
-  attachGroupToBrand,
-};
+module.exports = { list, create, get, update, remove, findOrCreateByNameOrCode, attachGroupToBrand };

@@ -490,6 +490,23 @@ const GRNDashboard = () => {
             min-width: 160px;
           }
 
+        .btn-soft {
+          border: 1px solid #e5e7eb;
+          background: #fff;
+          color: #344054;
+          border-radius: 10px;
+          padding: 8px 12px;
+          font-size: 13px;
+          font-weight: 600;
+          min-height: 42px;
+          white-space: nowrap;
+        }
+
+        .btn-soft:hover {
+          background: #f9fafb;
+          border-color: #d0d5dd;
+        }
+
           .result-badge {
             display: inline-flex;
             align-items: center;
@@ -603,7 +620,7 @@ const GRNDashboard = () => {
 
             <button
               type="button"
-              className="btn btn-light border"
+              className="btn-soft"
               onClick={resetFilters}
               title="Reset all filters"
             >

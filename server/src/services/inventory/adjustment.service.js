@@ -1,44 +1,23 @@
 // services/inventory/adjustment.service.js
 const mongoose = require("mongoose");
 const logger = require("../../utils/logger.js");
-
 const StockAdjustment = require("../../models/inventory/StockAdjustment.model");
 const Branch = require("../../models/inventorySettings/branch.model");
 const Item = require("../../models/inventory/item.model");
 const SalesRepStock = require("../../models/inventory/salesRepStock.model");
-
-const {
-  postPurchaseLedger,
-  postPurchaseReturnLedger,
-} = require("../ledger/purchaseLedger.service");
-const {
-  postSalesLedger,
-  postSalesReturnLedger,
-} = require("../ledger/salesLedger.service");
-const {
-  postLedger,
-  postStockReturnLedger,
-} = require("../ledger/stockLedger.service");
-
-// ✅ UOM math helper – same logic as invoice
+const { postPurchaseLedger, postPurchaseReturnLedger } = require("../ledger/purchaseLedger.service");
+const { postSalesLedger, postSalesReturnLedger } = require("../ledger/salesLedger.service");
+const { postLedger, postStockReturnLedger } = require("../ledger/stockLedger.service");
 const { computeIssueMovement } = require("../../utils/uomMath");
 
-// -------------------- Helpers --------------------
 function generateAdjustmentNo() {
   const now = new Date();
-  return `ADJ-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
-    2,
-    "0"
-  )}-${String(now.getDate()).padStart(2, "0")}-${Math.floor(
-    1000 + Math.random() * 9000
-  )}`;
+  return `ADJ-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}-${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
 function toObjectId(id) {
   if (!id) return null;
-  return id instanceof mongoose.Types.ObjectId
-    ? id
-    : new mongoose.Types.ObjectId(id);
+  return id instanceof mongoose.Types.ObjectId ? id : new mongoose.Types.ObjectId(id);
 }
 
 function toNumber(v) {
@@ -46,154 +25,72 @@ function toNumber(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-// ✅ scope helper (SalesRep only)
+// Apply sales-rep scope restrictions for queries when provided.
 function applyScope(filter = {}, scope = {}) {
   const q = { ...filter };
   if (scope.salesRep) q.salesRep = toObjectId(scope.salesRep);
   return q;
 }
 
-// -------------------- CREATE --------------------
+// Create a pending stock adjustment with normalized item values and pricing snapshots.
 async function createAdjustment(payload) {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const {
-      type,
-      items,
-      adjustmentDate,
-      branch,
-      salesRep = null,
-      createdBy = null,
-      createdBySalesRep = null,
-      adjustmentNo,
-      relatedSupplier = null,
-      relatedCustomer = null,
-      remarks = "",
-    } = payload;
+    const { type, items, adjustmentDate, branch, salesRep = null, createdBy = null, createdBySalesRep = null, adjustmentNo, relatedSupplier = null, relatedCustomer = null, remarks = "" } = payload;
 
-    logger.info("createAdjustment() called", {
-      itemsCount: items?.length || 0,
-      type,
-      branch,
-      salesRep,
-    });
+    logger.info("createAdjustment() called", { itemsCount: items?.length || 0, type, branch, salesRep });
 
     const branchDoc = await Branch.findById(branch).lean();
     if (!branchDoc) throw new Error("Invalid branch selected");
+    if (!salesRep) throw new Error("salesRep is required for Stock Adjustments (stock is tracked per SalesRep)");
 
-    if (!salesRep) {
-      throw new Error(
-        "salesRep is required for Stock Adjustments (stock is tracked per SalesRep)"
-      );
-    }
+    const processedItems = await Promise.all((items || []).map(async (i) => {
+      const primaryQty = toNumber(i.primaryQty);
+      const baseQty = toNumber(i.baseQty);
 
-    const processedItems = await Promise.all(
-      (items || []).map(async (i) => {
-        const primaryQty = toNumber(i.primaryQty);
-        const baseQty = toNumber(i.baseQty);
+      const itemDoc = await Item.findById(i.item?._id || i.item).select("avgCostBase avgCostPrimary sellingPriceBase sellingPricePrimary factorToBase").lean();
+      if (!itemDoc) throw new Error(`Item not found: ${i.item?._id || i.item}`);
 
-        const itemDoc = await Item.findById(i.item?._id || i.item)
-          .select(
-            "avgCostBase avgCostPrimary sellingPriceBase sellingPricePrimary factorToBase"
-          )
-          .lean();
+      const avgCostBase = toNumber(i.avgCostBase !== null && i.avgCostBase !== undefined ? i.avgCostBase : itemDoc.avgCostBase || 0);
+      const avgCostPrimary = toNumber(i.avgCostPrimary !== null && i.avgCostPrimary !== undefined ? i.avgCostPrimary : itemDoc.avgCostPrimary || 0);
+      const sellingPriceBase = toNumber(i.sellingPriceBase !== null && i.sellingPriceBase !== undefined ? i.sellingPriceBase : itemDoc.sellingPriceBase || 0);
+      const sellingPricePrimary = toNumber(i.sellingPricePrimary !== null && i.sellingPricePrimary !== undefined ? i.sellingPricePrimary : itemDoc.sellingPricePrimary || 0);
 
-        if (!itemDoc)
-          throw new Error(`Item not found: ${i.item?._id || i.item}`);
+      let factorToBase = toNumber(i.factorToBase);
+      if (factorToBase <= 0) factorToBase = toNumber(itemDoc.factorToBase) || 1;
 
-        const avgCostBase = toNumber(
-          i.avgCostBase !== null && i.avgCostBase !== undefined
-            ? i.avgCostBase
-            : itemDoc.avgCostBase || 0
-        );
-        const avgCostPrimary = toNumber(
-          i.avgCostPrimary !== null && i.avgCostPrimary !== undefined
-            ? i.avgCostPrimary
-            : itemDoc.avgCostPrimary || 0
-        );
-        const sellingPriceBase = toNumber(
-          i.sellingPriceBase !== null && i.sellingPriceBase !== undefined
-            ? i.sellingPriceBase
-            : itemDoc.sellingPriceBase || 0
-        );
-        const sellingPricePrimary = toNumber(
-          i.sellingPricePrimary !== null && i.sellingPricePrimary !== undefined
-            ? i.sellingPricePrimary
-            : itemDoc.sellingPricePrimary || 0
-        );
+      const absPrimary = Math.abs(primaryQty);
+      const absBase = Math.abs(baseQty);
+      const costTotal = absBase * avgCostBase + absPrimary * avgCostPrimary;
+      const sellingTotal = absPrimary * sellingPricePrimary + absBase * sellingPriceBase;
+      const itemTotalValue = type === "adj-sale" || type === "adj-sales-return" ? sellingTotal : costTotal; 
+      const totalSellingValue = sellingTotal;
 
-        // ✅ derive factorToBase safely
-        let factorToBase = toNumber(i.factorToBase);
-        if (factorToBase <= 0) {
-          factorToBase = toNumber(itemDoc.factorToBase) || 1;
-        }
+      return { item: toObjectId(i.item?._id || i.item), primaryQty, baseQty, avgCostPrimary, avgCostBase, sellingPricePrimary, sellingPriceBase, factorToBase, itemTotalValue, totalSellingValue, reason: i.reason || null };
+    }));
 
-        const absPrimary = Math.abs(primaryQty);
-        const absBase = Math.abs(baseQty);
+    const totalValue = processedItems.reduce((sum, i) => sum + toNumber(i.itemTotalValue), 0);
 
-const costTotal = absBase * avgCostBase + absPrimary * avgCostPrimary;
-const sellingTotal =
-  absPrimary * sellingPricePrimary + absBase * sellingPriceBase;
-
-// ✅ itemTotalValue depends on adjustment type (matches your UI logic)
-const itemTotalValue =
-  type === "adj-sale" || type === "adj-sales-return"
-    ? sellingTotal
-    : costTotal;
-
-// keep this if you still want both values stored
-const totalSellingValue = sellingTotal;
-
-
-        return {
-          item: toObjectId(i.item?._id || i.item),
-          primaryQty,
-          baseQty,
-          avgCostPrimary,
-          avgCostBase,
-          sellingPricePrimary,
-          sellingPriceBase,
-          factorToBase, // ✅ always > 0
-          itemTotalValue,
-          totalSellingValue,
-          reason: i.reason || null,
-        };
-      })
-    );
-
-    const totalValue = processedItems.reduce(
-      (sum, i) => sum + toNumber(i.itemTotalValue),
-      0
-    );
-
-    const [adj] = await StockAdjustment.create(
-      [
-        {
-          adjustmentNo: adjustmentNo || generateAdjustmentNo(),
-          branch: branchDoc._id,
-          salesRep: toObjectId(salesRep),
-          type,
-          adjustmentDate,
-          relatedSupplier: relatedSupplier ? toObjectId(relatedSupplier) : null,
-          relatedCustomer: relatedCustomer ? toObjectId(relatedCustomer) : null,
-          items: processedItems,
-          totalValue,
-          remarks,
-          status: "waiting_for_approval",
-          createdBy: createdBy ? toObjectId(createdBy) : null,
-          createdBySalesRep: createdBySalesRep
-            ? toObjectId(createdBySalesRep)
-            : null,
-        },
-      ],
-      { session }
-    );
+    const [adj] = await StockAdjustment.create([{
+      adjustmentNo: adjustmentNo || generateAdjustmentNo(),
+      branch: branchDoc._id,
+      salesRep: toObjectId(salesRep),
+      type,
+      adjustmentDate,
+      relatedSupplier: relatedSupplier ? toObjectId(relatedSupplier) : null,
+      relatedCustomer: relatedCustomer ? toObjectId(relatedCustomer) : null,
+      items: processedItems,
+      totalValue,
+      remarks,
+      status: "waiting_for_approval",
+      createdBy: createdBy ? toObjectId(createdBy) : null,
+      createdBySalesRep: createdBySalesRep ? toObjectId(createdBySalesRep) : null,
+    }], { session });
 
     await session.commitTransaction();
     session.endSession();
-
     return adj.toObject();
   } catch (err) {
     if (session.inTransaction()) await session.abortTransaction();
@@ -203,7 +100,7 @@ const totalSellingValue = sellingTotal;
   }
 }
 
-// -------------------- APPROVE --------------------
+// Approve a pending adjustment, update sales-rep stock, and post inventory/sales/purchase ledgers transactionally.
 async function approveAdjustment(id, userId) {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -211,16 +108,9 @@ async function approveAdjustment(id, userId) {
   try {
     logger.info("approveAdjustment() called", { id });
 
-    const adj = await StockAdjustment.findById(id)
-      .populate("branch")
-      .session(session);
+    const adj = await StockAdjustment.findById(id).populate("branch").session(session);
     if (!adj) throw new Error("Adjustment not found");
-
-    if (adj.status !== "waiting_for_approval") {
-      throw new Error(
-        "Only waiting_for_approval adjustments can be approved"
-      );
-    }
+    if (adj.status !== "waiting_for_approval") throw new Error("Only waiting_for_approval adjustments can be approved");
 
     adj.status = "approved";
     adj.approvedBy = userId;
@@ -230,177 +120,68 @@ async function approveAdjustment(id, userId) {
     const refId = adj._id;
     const branchId = String(adj.branch._id);
     const salesRepId = adj.salesRep ? String(adj.salesRep) : null;
-
-    if (!salesRepId) {
-      throw new Error(
-        "Adjustment missing salesRep (required for ledger posting)"
-      );
-    }
+    if (!salesRepId) throw new Error("Adjustment missing salesRep (required for ledger posting)");
 
     for (const line of adj.items || []) {
       const qtyPrimary = toNumber(line.primaryQty);
       const qtyBase = toNumber(line.baseQty);
-
       if (!qtyPrimary && !qtyBase) continue;
 
-      const itemDoc = await Item.findById(line.item?._id || line.item)
-        .select(
-          "avgCostBase avgCostPrimary sellingPriceBase sellingPricePrimary factorToBase"
-        )
-        .session(session)
-        .lean();
+      const itemDoc = await Item.findById(line.item?._id || line.item).select("avgCostBase avgCostPrimary sellingPriceBase sellingPricePrimary factorToBase").session(session).lean();
+      if (!itemDoc) throw new Error(`Item not found: ${line.item?._id || line.item}`);
 
-      if (!itemDoc) {
-        throw new Error(`Item not found: ${line.item?._id || line.item}`);
-      }
+      const avgCostBase = toNumber(line.avgCostBase !== null && line.avgCostBase !== undefined ? line.avgCostBase : itemDoc.avgCostBase || 0);
+      const avgCostPrimary = toNumber(line.avgCostPrimary !== null && line.avgCostPrimary !== undefined ? line.avgCostPrimary : itemDoc.avgCostPrimary || 0);
+      const sellingPriceBase = toNumber(line.sellingPriceBase !== null && line.sellingPriceBase !== undefined ? line.sellingPriceBase : itemDoc.sellingPriceBase || 0);
+      const sellingPricePrimary = toNumber(line.sellingPricePrimary !== null && line.sellingPricePrimary !== undefined ? line.sellingPricePrimary : itemDoc.sellingPricePrimary || 0);
 
-      // ---------- resolve costs & prices ----------
-      const avgCostBase = toNumber(
-        line.avgCostBase !== null && line.avgCostBase !== undefined
-          ? line.avgCostBase
-          : itemDoc.avgCostBase || 0
-      );
-      const avgCostPrimary = toNumber(
-        line.avgCostPrimary !== null && line.avgCostPrimary !== undefined
-          ? line.avgCostPrimary
-          : itemDoc.avgCostPrimary || 0
-      );
-      const sellingPriceBase = toNumber(
-        line.sellingPriceBase !== null && line.sellingPriceBase !== undefined
-          ? line.sellingPriceBase
-          : itemDoc.sellingPriceBase || 0
-      );
-      const sellingPricePrimary = toNumber(
-        line.sellingPricePrimary !== null &&
-          line.sellingPricePrimary !== undefined
-          ? line.sellingPricePrimary
-          : itemDoc.sellingPricePrimary || 0
-      );
-
-      // ✅ factor with fallback
       let factorToBase = toNumber(line.factorToBase);
-      if (factorToBase <= 0) {
-        factorToBase = toNumber(itemDoc.factorToBase) || 1;
-      }
+      if (factorToBase <= 0) factorToBase = toNumber(itemDoc.factorToBase) || 1;
 
-      // ---------- valuations for this line ----------
       const absPrimary = Math.abs(qtyPrimary);
       const absBase = Math.abs(qtyBase);
+      const itemTotalValue = absBase * avgCostBase + absPrimary * avgCostPrimary; // Cost valuation for purchase/stock movements.
+      const totalSellingValue = absPrimary * sellingPricePrimary + absBase * sellingPriceBase; // Sales valuation for sales movements.
 
-      // Cost side (for purchase-related ledgers)
-      const itemTotalValue =
-        absBase * avgCostBase + absPrimary * avgCostPrimary;
-
-      // Sales valuation (for sales-related ledgers)
-      const totalSellingValue =
-        absPrimary * sellingPricePrimary + absBase * sellingPriceBase;
-
-      const isIncrease =
-        adj.type === "adj-sales-return" || adj.type === "adj-goods-receive";
-      const isDecrease =
-        adj.type === "adj-sale" || adj.type === "adj-goods-return";
-
-      // --------------------------
-      // ✅ SalesRepStock updates + movement for ledger
-      // --------------------------
+      const isIncrease = adj.type === "adj-sales-return" || adj.type === "adj-goods-receive";
+      const isDecrease = adj.type === "adj-sale" || adj.type === "adj-goods-return";
 
       let movementPrimaryForLedger = absPrimary;
       let movementBaseForLedger = absBase;
 
       if (isIncrease) {
-        // 👉 For adj-goods-receive / adj-sales-return:
-        //    - No conversion, just add primary to primary, base to base
-        //    - Value is recomputed from NEW qty
+        const salesRepStock = await SalesRepStock.findOne({ salesRep: adj.salesRep, item: line.item }).session(session).lean();
+        if (!salesRepStock) throw new Error(`SalesRep stock not found for item ${line.item}`);
 
-        const salesRepStock = await SalesRepStock.findOne({
-          salesRep: adj.salesRep,
-          item: line.item,
-        })
-          .session(session)
-          .lean();
-
-        if (!salesRepStock) {
-          throw new Error(`SalesRep stock not found for item ${line.item}`);
-        }
-
-        const currentPrimary = toNumber(
-          salesRepStock.qtyOnHandPrimary || 0
-        );
+        const currentPrimary = toNumber(salesRepStock.qtyOnHandPrimary || 0);
         const currentBase = toNumber(salesRepStock.qtyOnHandBase || 0);
-
         const newPrimaryQty = currentPrimary + qtyPrimary;
         const newBaseQty = currentBase + qtyBase;
-
         const newStockValuePrimary = newPrimaryQty * avgCostPrimary;
         const newStockValueBase = newBaseQty * avgCostBase;
 
         await SalesRepStock.findOneAndUpdate(
           { salesRep: adj.salesRep, item: line.item },
-          {
-            $set: {
-              qtyOnHandPrimary: newPrimaryQty,
-              qtyOnHandBase: newBaseQty,
-              stockValuePrimary: newStockValuePrimary,
-              stockValueBase: newStockValueBase,
-              factorToBase, // keep factor on the record
-            },
-          },
+          { $set: { qtyOnHandPrimary: newPrimaryQty, qtyOnHandBase: newBaseQty, stockValuePrimary: newStockValuePrimary, stockValueBase: newStockValueBase, factorToBase } },
           { new: true, upsert: true, setDefaultsOnInsert: true, session }
         );
-
-        // movementForLedger = abs typed (already set)
       }
 
       if (isDecrease) {
-        // 👉 For adj-sale / adj-goods-return:
-        //    - Use computeIssueMovement (like invoice) for quantity
-        //    - Recompute value from NEW qty
+        const salesRepStock = await SalesRepStock.findOne({ salesRep: adj.salesRep, item: line.item }).session(session).lean();
+        if (!salesRepStock) throw Object.assign(new Error(`SalesRep stock not found for item ${line.item}`), { status: 400, code: "INSUFFICIENT_STOCK" });
 
-        const salesRepStock = await SalesRepStock.findOne({
-          salesRep: adj.salesRep,
-          item: line.item,
-        })
-          .session(session)
-          .lean();
-
-        if (!salesRepStock) {
-          throw Object.assign(
-            new Error(`SalesRep stock not found for item ${line.item}`),
-            {
-              status: 400,
-              code: "INSUFFICIENT_STOCK",
-            }
-          );
-        }
-
-        const currentPrimary = toNumber(
-          salesRepStock.qtyOnHandPrimary || 0
-        );
+        const currentPrimary = toNumber(salesRepStock.qtyOnHandPrimary || 0);
         const currentBase = toNumber(salesRepStock.qtyOnHandBase || 0);
+        const effectiveFactor = toNumber(factorToBase || salesRepStock.factorToBase || itemDoc.factorToBase || 1);
 
-        const effectiveFactor = toNumber(
-          factorToBase ||
-            salesRepStock.factorToBase ||
-            itemDoc.factorToBase ||
-            1
-        );
-
-        const {
-          movementPrimary,
-          movementBase,
-          newPrimary,
-          newBase,
-        } = computeIssueMovement({
+        const { movementPrimary, movementBase, newPrimary, newBase } = computeIssueMovement({
           currentPrimary,
           currentBase,
           issuePrimary: absPrimary,
           issueBase: absBase,
           factorToBase: effectiveFactor,
-          errorMeta: {
-            item: String(line.item),
-            salesRep: String(adj.salesRep),
-            adjustmentId: String(adj._id),
-          },
+          errorMeta: { item: String(line.item), salesRep: String(adj.salesRep), adjustmentId: String(adj._id) },
         });
 
         movementPrimaryForLedger = movementPrimary;
@@ -411,29 +192,14 @@ async function approveAdjustment(id, userId) {
 
         await SalesRepStock.findOneAndUpdate(
           { salesRep: adj.salesRep, item: line.item },
-          {
-            $set: {
-              qtyOnHandPrimary: newPrimary,
-              qtyOnHandBase: newBase,
-              stockValuePrimary: newStockValuePrimary,
-              stockValueBase: newStockValueBase,
-              factorToBase: effectiveFactor,
-            },
-          },
+          { $set: { qtyOnHandPrimary: newPrimary, qtyOnHandBase: newBase, stockValuePrimary: newStockValuePrimary, stockValueBase: newStockValueBase, factorToBase: effectiveFactor } },
           { new: true, session }
         );
       }
 
       const reason = line.reason || adj.reason || "Stock adjustment";
+      const movementItemTotalValue = movementBaseForLedger * avgCostBase + movementPrimaryForLedger * avgCostPrimary; // Computed movement cost retained for consistency/debugging.
 
-      // Cost value for **movement** (not just original typed qty)
-      const movementItemTotalValue =
-        movementBaseForLedger * avgCostBase +
-        movementPrimaryForLedger * avgCostPrimary;
-
-      // --------------------------
-      // Ledger postings
-      // --------------------------
       switch (adj.type) {
         case "adj-sale": {
           await postLedger({
@@ -475,7 +241,6 @@ async function approveAdjustment(id, userId) {
             createdBy: userId,
             session,
           });
-
           break;
         }
 
@@ -518,7 +283,6 @@ async function approveAdjustment(id, userId) {
             createdBy: userId,
             session,
           });
-
           break;
         }
 
@@ -562,7 +326,6 @@ async function approveAdjustment(id, userId) {
             createdBy: userId,
             session,
           });
-
           break;
         }
 
@@ -605,7 +368,6 @@ async function approveAdjustment(id, userId) {
             createdBy: userId,
             session,
           });
-
           break;
         }
 
@@ -617,7 +379,6 @@ async function approveAdjustment(id, userId) {
     await adj.save({ session });
     await session.commitTransaction();
     session.endSession();
-
     return adj.toObject();
   } catch (err) {
     logger.error("approveAdjustment() failed", err);
@@ -627,13 +388,9 @@ async function approveAdjustment(id, userId) {
   }
 }
 
-// -------------------- LIST --------------------
+// List adjustments with optional scope filtering and lightweight related data.
 async function listAdjustments(filter = {}, scope = {}) {
-  const cleanFilter = Object.fromEntries(
-    Object.entries(filter).filter(
-      ([_, v]) => v !== undefined && v !== null && v !== ""
-    )
-  );
+  const cleanFilter = Object.fromEntries(Object.entries(filter).filter(([_, v]) => v !== undefined && v !== null && v !== ""));
   const q = applyScope(cleanFilter, scope);
 
   return StockAdjustment.find(q)
@@ -644,7 +401,7 @@ async function listAdjustments(filter = {}, scope = {}) {
     .lean();
 }
 
-// -------------------- GET --------------------
+// Get a single adjustment with item and approver details, respecting scope restrictions.
 async function getAdjustment(id, scope = {}) {
   const q = applyScope({ _id: id }, scope);
 
@@ -656,25 +413,18 @@ async function getAdjustment(id, scope = {}) {
     .lean();
 }
 
-// -------------------- DELETE --------------------
+// Delete only pending adjustments within scope before any ledger posting occurs.
 async function deleteAdjustment(id, scope = {}) {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const q = applyScope({ _id: id }, scope);
-
     const adj = await StockAdjustment.findOne(q).session(session);
     if (!adj) throw new Error("Stock Adjustment not found");
-
-    if (adj.status !== "waiting_for_approval") {
-      throw new Error(
-        "Only adjustments in 'waiting_for_approval' can be deleted"
-      );
-    }
+    if (adj.status !== "waiting_for_approval") throw new Error("Only adjustments in 'waiting_for_approval' can be deleted");
 
     await StockAdjustment.deleteOne({ _id: adj._id }).session(session);
-
     await session.commitTransaction();
     session.endSession();
 
@@ -687,31 +437,18 @@ async function deleteAdjustment(id, scope = {}) {
   }
 }
 
-// -------------------- UPDATE --------------------
+// Update a pending adjustment and recalculate item totals without changing approval/ledger logic.
 async function updateAdjustment(id, payload, scope = {}) {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const q = applyScope({ _id: id }, scope);
-
     const adj = await StockAdjustment.findOne(q).session(session);
     if (!adj) throw new Error("Stock Adjustment not found");
+    if (adj.status !== "waiting_for_approval") throw new Error("Only adjustments in 'waiting_for_approval' can be updated");
 
-    if (adj.status !== "waiting_for_approval") {
-      throw new Error(
-        "Only adjustments in 'waiting_for_approval' can be updated"
-      );
-    }
-
-    const {
-      branch,
-      adjustmentDate,
-      remarks,
-      items: rawItems,
-      type: incomingType,
-      salesRep,
-    } = payload;
+    const { branch, adjustmentDate, remarks, items: rawItems, type: incomingType, salesRep } = payload;
 
     if (branch) {
       const branchDoc = await Branch.findById(branch).lean();
@@ -727,63 +464,32 @@ async function updateAdjustment(id, payload, scope = {}) {
     const items = [];
     for (const line of rawItems || []) {
       const itemId = toObjectId(line.item?._id || line.item);
-
       const primaryQty = toNumber(line.primaryQty);
       const baseQty = toNumber(line.baseQty);
 
-      if (!Number.isFinite(primaryQty) || !Number.isFinite(baseQty)) {
-        throw new Error(`Invalid qty for item ${itemId}`);
-      }
-      if (!primaryQty && !baseQty) {
-        throw new Error(
-          `Both primaryQty and baseQty cannot be 0 for item ${itemId}`
-        );
-      }
+      if (!Number.isFinite(primaryQty) || !Number.isFinite(baseQty)) throw new Error(`Invalid qty for item ${itemId}`);
+      if (!primaryQty && !baseQty) throw new Error(`Both primaryQty and baseQty cannot be 0 for item ${itemId}`);
 
       const avgCostPrimary = toNumber(line.avgCostPrimary);
       const avgCostBase = toNumber(line.avgCostBase);
-
       const sellingPricePrimary = toNumber(line.sellingPricePrimary);
       const sellingPriceBase = toNumber(line.sellingPriceBase);
-
       const factorToBase = toNumber(line.factorToBase);
 
       const absPrimary = Math.abs(primaryQty);
       const absBase = Math.abs(baseQty);
+      const itemTotalValue = absBase * avgCostBase + absPrimary * avgCostPrimary; // Cost valuation snapshot.
+      const totalSellingValue = absPrimary * sellingPricePrimary + absBase * sellingPriceBase; // Sales valuation snapshot.
 
-      // Cost valuation
-      const itemTotalValue =
-        absBase * avgCostBase + absPrimary * avgCostPrimary;
-
-      // Sales valuation (for adj-sale / adj-sales-return usage)
-      const totalSellingValue =
-        absPrimary * sellingPricePrimary + absBase * sellingPriceBase;
-
-      items.push({
-        item: itemId,
-        primaryQty,
-        baseQty,
-        avgCostPrimary,
-        avgCostBase,
-        sellingPricePrimary,
-        sellingPriceBase,
-        factorToBase,
-        itemTotalValue,
-        totalSellingValue,
-        reason: line.reason || null,
-      });
+      items.push({ item: itemId, primaryQty, baseQty, avgCostPrimary, avgCostBase, sellingPricePrimary, sellingPriceBase, factorToBase, itemTotalValue, totalSellingValue, reason: line.reason || null });
     }
 
     adj.adjustmentDate = adjustmentDate || adj.adjustmentDate;
     adj.remarks = remarks ?? adj.remarks;
     adj.items = items;
-    adj.totalValue = items.reduce(
-      (sum, i) => sum + toNumber(i.itemTotalValue),
-      0
-    );
+    adj.totalValue = items.reduce((sum, i) => sum + toNumber(i.itemTotalValue), 0);
 
     await adj.save({ session });
-
     await session.commitTransaction();
     session.endSession();
 
@@ -796,11 +502,4 @@ async function updateAdjustment(id, payload, scope = {}) {
   }
 }
 
-module.exports = {
-  createAdjustment,
-  approveAdjustment,
-  listAdjustments,
-  getAdjustment,
-  deleteAdjustment,
-  updateAdjustment,
-};
+module.exports = { createAdjustment, approveAdjustment, listAdjustments, getAdjustment, deleteAdjustment, updateAdjustment };

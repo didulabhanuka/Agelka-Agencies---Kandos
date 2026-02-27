@@ -7,6 +7,7 @@ import {
   listCustomerPayments,
   getCustomerPayment,
   deleteCustomerPayment,
+  approveCustomerPayment,
 } from "../../lib/api/finance.api";
 
 import { getCustomers, getSalesReps } from "../../lib/api/users.api";
@@ -282,18 +283,25 @@ const CustomerPaymentsDashboard = () => {
   // --------------------------------------------------
   // Modal Handlers
   // --------------------------------------------------
-  const handleOpenCreate = () => {
-    setModalMode("create");
-    setSelectedPayment(null);
-    setModalOpen(true);
-  };
+  // const handleOpenCreate = () => {
+  //   setModalMode("create");
+  //   setSelectedPayment(null);
+  //   setModalOpen(true);
+  // };
 
-  const handleView = async (payment) => {
+    const handleOpenModal = async (mode, payment = null) => {
+    setModalMode(mode);
+    setLoading(true);
+
     try {
-      setLoading(true);
-      const data = await getCustomerPayment(payment._id);
-      setSelectedPayment(data?.data || data);
-      setModalMode("view");
+      if (payment?._id && (mode === "view" || mode === "edit")) {
+        const response = await getCustomerPayment(payment._id);
+        const latest = response?.data || response;
+        setSelectedPayment(latest);
+      } else {
+        setSelectedPayment(null);
+      }
+
       setModalOpen(true);
     } catch (err) {
       console.error("❌ Failed loading payment:", err);
@@ -302,6 +310,21 @@ const CustomerPaymentsDashboard = () => {
       setLoading(false);
     }
   };
+
+  // const handleView = async (payment) => {
+  //   try {
+  //     setLoading(true);
+  //     const data = await getCustomerPayment(payment._id);
+  //     setSelectedPayment(data?.data || data);
+  //     setModalMode("view");
+  //     setModalOpen(true);
+  //   } catch (err) {
+  //     console.error("❌ Failed loading payment:", err);
+  //     toast.error("Failed to load payment details");
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
 
   const handleDelete = async (payment) => {
     if (!isAdminOrDataEntry) return;
@@ -322,6 +345,54 @@ const CustomerPaymentsDashboard = () => {
   const closeModal = () => {
     setModalOpen(false);
     setSelectedPayment(null);
+  };
+
+  const handleApprovePayment = async (payment) => {
+    if (payment.status !== "waiting_for_approval") {
+      toast.info("Only payments waiting for approval can be approved.");
+      return;
+    }
+
+    if (!window.confirm(`Approve payment ${payment.paymentNo}?`)) return;
+
+    try {
+      setLoading(true);
+      const res = await approveCustomerPayment(payment._id); // Call the imported API function
+      toast.success(res?.message || "Payment approved successfully.");
+
+      // Manually update the payment status in state to trigger re-render
+      setPayments((prevPayments) =>
+        prevPayments.map((p) =>
+          p._id === payment._id ? { ...p, status: "approved" } : p
+        )
+      );
+
+      await fetchAll(); // Reload data after approval (optional)
+    } catch (err) {
+      console.error("❌ Failed to approve payment:", err);
+      toast.error(err?.response?.data?.message || "Failed to approve payment.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Add this helper to handle payment status visuals like the invoice status
+  const getPaymentStatusMeta = (status) => {
+    switch (status) {
+      case "approved":
+        return { label: "Approved", className: "pill-success", icon: "bi-check-circle-fill" };
+      case "cancelled":
+        return { label: "Cancelled", className: "pill-danger", icon: "bi-x-circle-fill" };
+      case "draft":
+        return { label: "Draft", className: "pill-muted", icon: "bi-file-earmark-text-fill" };
+      case "waiting_for_approval":
+      default:
+        return {
+          label: isSalesRep ? "Waiting for Admin Approval" : "Waiting for Approval",
+          className: "pill-warning",
+          icon: "bi-hourglass-split",
+        };
+    }
   };
 
   const colSpan = isAdminOrDataEntry ? 8 : 7;
@@ -387,6 +458,23 @@ const CustomerPaymentsDashboard = () => {
           .filter-grid .custom-select {
             min-width: 170px;
           }
+
+        .btn-soft {
+          border: 1px solid #e5e7eb;
+          background: #fff;
+          color: #344054;
+          border-radius: 10px;
+          padding: 8px 12px;
+          font-size: 13px;
+          font-weight: 600;
+          min-height: 42px;
+          white-space: nowrap;
+        }
+
+        .btn-soft:hover {
+          background: #f9fafb;
+          border-color: #d0d5dd;
+        }
 
           .result-badge {
             display: inline-flex;
@@ -591,7 +679,7 @@ const CustomerPaymentsDashboard = () => {
 
             <button
               type="button"
-              className="btn btn-light border"
+              className="btn-soft"
               onClick={resetFilters}
               title="Reset all filters"
             >
@@ -601,7 +689,9 @@ const CustomerPaymentsDashboard = () => {
           </div>
         </div>
 
-        <button className="action-btn" onClick={handleOpenCreate}>
+        <button className="action-btn" onClick={() => handleOpenModal("create")}>
+
+        {/* <button className="action-btn" onClick={handleOpenCreate}> */}
           + Record Payment
         </button>
       </div>
@@ -732,19 +822,38 @@ const CustomerPaymentsDashboard = () => {
                           <button
                             className="icon-btn-ux view"
                             title="View Payment"
-                            onClick={() => handleView(p)}
+                            onClick={() => handleOpenModal("view", p)}
                           >
                             <i className="bi bi-eye" />
                           </button>
 
-                          {isAdminOrDataEntry && (
-                            <button
-                              className="icon-btn-ux delete"
-                              title="Delete Payment"
-                              onClick={() => handleDelete(p)}
-                            >
-                              <i className="bi bi-trash" />
-                            </button>
+                          {p.status === "waiting_for_approval" && (
+                            <>
+                              <button
+                                className="icon-btn-ux edit"
+                                title="Edit Payment"
+                                onClick={() => handleOpenModal("edit", p)}
+                              >
+                                <i className="bi bi-pencil-square" />
+                              </button>
+
+                              <button
+                                className="icon-btn-ux delete"
+                                onClick={() => handleDelete(p)}
+                              >
+                                 <i className="bi bi-trash" />
+                              </button>
+
+                              {isAdminOrDataEntry && (
+                                <button
+                                  className="icon-btn-ux approve"
+                                  title="Approve Payment"
+                                  onClick={() => handleApprovePayment(p)}
+                                >
+                                  <i className="bi bi-check-circle" />
+                                </button>
+                              )}
+                            </>
                           )}
                         </div>
                       </td>

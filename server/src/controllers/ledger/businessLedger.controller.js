@@ -1,7 +1,8 @@
-// controllers/inventory/businessLedger.controller.js
+// controllers/ledger/businessLedger.controller.js
 const { asyncHandler } = require("../../utils/asyncHandler");
 const svc = require("../../services/ledger/businessLedger.service");
 
+// Normalizes query date strings into inclusive day-bound Date objects.
 const normalizeDateRange = (from, to) => {
   let fromDate = null;
   let toDate = null;
@@ -19,15 +20,13 @@ const normalizeDateRange = (from, to) => {
   return { fromDate, toDate };
 };
 
-// ✅ SalesRep scope resolver (same pattern as other ledger controllers)
+// Resolves effective sales rep scope (forced self-scope for SalesRep actors, optional query scope for internal users).
 function resolveSalesRepScope(req) {
   if (req.authActor?.actorType === "SalesRep") return String(req.authActor.id);
   return req.query.salesRep || null;
 }
 
-// --------------------------------------------------
-// 📊 Get Overall Business Summary
-// --------------------------------------------------
+// GET /ledger/business/summary - Returns overall business revenue/cost/profit summary for the selected filters.
 exports.getBusinessSummary = asyncHandler(async (req, res) => {
   const { branch, from, to } = req.query;
   const { fromDate, toDate } = normalizeDateRange(from, to);
@@ -37,7 +36,7 @@ exports.getBusinessSummary = asyncHandler(async (req, res) => {
   if (fromDate) filters.from = fromDate;
   if (toDate) filters.to = toDate;
 
-  // ✅ NEW
+  // Apply sales rep scope when provided or when request is from a SalesRep actor.
   const scopedSalesRep = resolveSalesRepScope(req);
   if (scopedSalesRep) filters.salesRep = scopedSalesRep;
 
@@ -49,9 +48,7 @@ exports.getBusinessSummary = asyncHandler(async (req, res) => {
   });
 });
 
-// --------------------------------------------------
-// 🧾 Get Item-wise Profitability
-// --------------------------------------------------
+// GET /ledger/business/items - Returns item-wise profitability summary for the selected filters.
 exports.getItemSummary = asyncHandler(async (req, res) => {
   const { branch, from, to } = req.query;
   const { fromDate, toDate } = normalizeDateRange(from, to);
@@ -61,7 +58,7 @@ exports.getItemSummary = asyncHandler(async (req, res) => {
   if (fromDate) filters.from = fromDate;
   if (toDate) filters.to = toDate;
 
-  // ✅ NEW
+  // Apply sales rep scope when provided or when request is from a SalesRep actor.
   const scopedSalesRep = resolveSalesRepScope(req);
   if (scopedSalesRep) filters.salesRep = scopedSalesRep;
 
@@ -74,19 +71,17 @@ exports.getItemSummary = asyncHandler(async (req, res) => {
   });
 });
 
-// --------------------------------------------------
-// 🏢 Get Branch-wise Profitability
-// --------------------------------------------------
+// GET /ledger/business/branches - Returns branch-wise profitability summary for the selected filters.
 exports.getBranchSummary = asyncHandler(async (req, res) => {
   const { branch, from, to } = req.query;
   const { fromDate, toDate } = normalizeDateRange(from, to);
 
   const filters = {};
-  if (branch) filters.branch = branch; // ✅ allow optional branch filter
+  if (branch) filters.branch = branch;
   if (fromDate) filters.from = fromDate;
   if (toDate) filters.to = toDate;
 
-  // ✅ NEW
+  // Apply sales rep scope when provided or when request is from a SalesRep actor.
   const scopedSalesRep = resolveSalesRepScope(req);
   if (scopedSalesRep) filters.salesRep = scopedSalesRep;
 
@@ -99,9 +94,7 @@ exports.getBranchSummary = asyncHandler(async (req, res) => {
   });
 });
 
-// --------------------------------------------------
-// 🧠 Get Full Business Snapshot (summary + branch + item)
-// --------------------------------------------------
+// GET /ledger/business/snapshot - Returns combined business snapshot (summary, branch breakdown, item breakdown).
 exports.getBusinessSnapshot = asyncHandler(async (req, res) => {
   const { branch, from, to } = req.query;
   const { fromDate, toDate } = normalizeDateRange(from, to);
@@ -111,7 +104,7 @@ exports.getBusinessSnapshot = asyncHandler(async (req, res) => {
   if (fromDate) filters.from = fromDate;
   if (toDate) filters.to = toDate;
 
-  // ✅ NEW
+  // Apply sales rep scope when provided or when request is from a SalesRep actor.
   const scopedSalesRep = resolveSalesRepScope(req);
   if (scopedSalesRep) filters.salesRep = scopedSalesRep;
 

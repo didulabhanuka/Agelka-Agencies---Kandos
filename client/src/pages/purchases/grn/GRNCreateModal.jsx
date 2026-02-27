@@ -1,5 +1,5 @@
 // src/pages/transactions/GRNCreateModal.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Button } from "react-bootstrap";
 import Select from "react-select";
 import { toast, ToastContainer } from "react-toastify";
@@ -12,8 +12,8 @@ import { getSuppliers, getSalesReps } from "../../../lib/api/users.api";
 import "bootstrap-icons/font/bootstrap-icons.css";
 import "react-toastify/dist/ReactToastify.css";
 
-import { PDFDownloadLink } from "@react-pdf/renderer";
-import GRNPDF from "../../../components/pdf/GRNPDF";
+import { useReactToPrint } from "react-to-print";
+import GRNPrintTemplate from "../../../components/print/GRNPrintTemplate";
 
 function generateGRNNo() {
   const now = new Date();
@@ -89,15 +89,156 @@ const GRNCreateModal = ({
   const [form, setForm] = useState(buildEmptyForm);
   const [hoveredRowIndex, setHoveredRowIndex] = useState(null);
 
-  // Helpers
-  const computeLineTotal = (row) => {
-    const baseQty = Number(row.baseQty) || 0;
-    const primaryQty = Number(row.primaryQty) || 0;
-    const avgBase = Number(row.avgCostBase) || 0;
-    const avgPrimary = Number(row.avgCostPrimary) || 0;
-    const discount = Number(row.discountPerUnit) || 0;
+  // Print ref
+  const printRef = useRef(null);
+
+  // Helpers (function declaration so it is hoisted for printableGRN useMemo)
+  function computeLineTotal(row) {
+    const factor = Number(row?.factorToBase) || 1;
+    const hasBaseUOM = factor > 1;
+
+    const baseQty = hasBaseUOM ? Number(row?.baseQty) || 0 : 0;
+    const primaryQty = Number(row?.primaryQty) || 0;
+    const avgBase = hasBaseUOM ? Number(row?.avgCostBase) || 0 : 0;
+    const avgPrimary = Number(row?.avgCostPrimary) || 0;
+    const discount = Number(row?.discountPerUnit) || 0;
+
     return baseQty * avgBase + primaryQty * avgPrimary - discount;
+  }
+
+  const getDisplayItemForPrint = (row) => {
+    const rowItemId = row?.item?._id || row?.item;
+
+    // Best source in view mode
+    const selectedRow = selectedGRN?.items?.find(
+      (x) => String(x?.item?._id || x?.item) === String(rowItemId)
+    );
+
+    if (selectedRow?.item) return selectedRow.item;
+
+    // Best source in create/edit mode
+    return items.find((it) => String(it._id) === String(rowItemId)) || null;
   };
+
+  const printableGRN = useMemo(() => {
+    const branchName =
+      branches.find((b) => String(b._id) === String(form.branch))?.name ||
+      selectedGRN?.branch?.name ||
+      "-";
+
+    const supplierName =
+      suppliers.find((s) => String(s._id) === String(form.supplier))?.name ||
+      selectedGRN?.supplier?.name ||
+      "-";
+
+    const salesRepName =
+      salesReps.find((sr) => String(sr._id) === String(form.salesRep))?.name ||
+      salesReps.find((sr) => String(sr._id) === String(form.salesRep))?.fullName ||
+      selectedGRN?.salesRep?.name ||
+      user?.name ||
+      "-";
+
+    const mappedItems = (form.items || [])
+      .filter((r) => r.item)
+      .map((row) => {
+        const rowItemId = row?.item?._id || row?.item;
+        const itemObj = getDisplayItemForPrint(row);
+
+        const selectedGrnItem = selectedGRN?.items?.find(
+          (x) => String(x?.item?._id || x?.item) === String(rowItemId)
+        );
+        // Prefer saved row factor first
+        const factorToBase = Number(
+          row?.factorToBase ??
+            selectedGrnItem?.factorToBase ??
+            itemObj?.factorToBase ??
+            1
+        );
+
+        const hasBaseUOM = factorToBase > 1;
+
+        // Support old/new field names
+        const primaryUom = selectedGrnItem?.item?.primaryUom || "Primary";
+        const baseUom = selectedGrnItem?.item?.baseUom || "Base";
+
+        return {
+          itemName: itemObj?.name || selectedGrnItem?.item?.name || "Unknown Item",
+          itemCode: itemObj?.itemCode || selectedGrnItem?.item?.itemCode || "-",
+
+          // UOM fields for print template
+          hasBaseUOM,
+          primaryUom,
+          baseUom,
+          factorToBase,
+
+          // aliases for backward-compatible print templates
+          primaryUnit: primaryUom,
+          baseUnit: baseUom,
+
+          primaryQty:
+            row.primaryQty === "" || row.primaryQty == null
+              ? "-"
+              : Number(row.primaryQty),
+
+          baseQty:
+            hasBaseUOM
+              ? row.baseQty === "" || row.baseQty == null
+                ? "-"
+                : Number(row.baseQty)
+              : "-",
+
+          avgCostPrimary:
+            row.avgCostPrimary === "" || row.avgCostPrimary == null
+              ? "-"
+              : `LKR ${Number(row.avgCostPrimary).toLocaleString("en-LK", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}`,
+
+          avgCostBase:
+            hasBaseUOM && row.avgCostBase !== "" && row.avgCostBase != null
+              ? `LKR ${Number(row.avgCostBase).toLocaleString("en-LK", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}`
+              : "-",
+
+          discount:
+            row.discountPerUnit === "" ||
+            row.discountPerUnit == null ||
+            Number(row.discountPerUnit) === 0
+              ? "-"
+              : `LKR ${Number(row.discountPerUnit).toLocaleString("en-LK", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}`,
+
+          lineTotal: `LKR ${Number(
+            row.lineTotal || computeLineTotal(row)
+          ).toLocaleString("en-LK", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}`,
+        };
+      });
+
+    return {
+      grnNo: form.grnNo,
+      branchName,
+      supplierName,
+      salesRepName,
+      supplierInvoiceNo: form.supplierInvoiceNo,
+      supplierInvoiceDate: form.supplierInvoiceDate,
+      receivedDate: form.receivedDate,
+      items: mappedItems,
+      totalValue,
+    };
+  }, [form, branches, suppliers, salesReps, items, selectedGRN, user, totalValue]);
+
+  const handlePrintGRN = useReactToPrint({
+    contentRef: printRef,
+    documentTitle: form.grnNo || "Good Receive Note",
+  });
 
   const formatCurrency = (value) => {
     const n = Number(value || 0);
@@ -233,10 +374,14 @@ const GRNCreateModal = ({
 
     const mappedItems = (selectedGRN.items || []).map((i) => {
       const primaryQty = Number(i.primaryQty) || 0;
-      const baseQty = Number(i.baseQty) || 0;
-      const avgCostBase = Number(i.avgCostBase) || 0;
+      const factorToBase = Number(i.factorToBase) || 1;
+      const hasBaseUOM = factorToBase > 1;
+
+      const baseQty = hasBaseUOM ? Number(i.baseQty) || 0 : 0;
+      const avgCostBase = hasBaseUOM ? Number(i.avgCostBase) || 0 : 0;
       const avgCostPrimary = Number(i.avgCostPrimary) || 0;
       const discountPerUnit = Number(i.discountPerUnit || 0);
+
       const lineTotal =
         baseQty * avgCostBase + primaryQty * avgCostPrimary - discountPerUnit;
 
@@ -244,7 +389,7 @@ const GRNCreateModal = ({
         item: i.item?._id || i.item,
         primaryQty,
         baseQty,
-        factorToBase: Number(i.factorToBase) || 1,
+        factorToBase,
         avgCostBase,
         avgCostPrimary,
         discountPerUnit,
@@ -276,6 +421,15 @@ const GRNCreateModal = ({
     setForm((prev) => {
       const nextItems = [...prev.items];
       const nextRow = { ...nextItems[rowIndex], ...patch };
+
+      const factor = Number(nextRow.factorToBase) || 1;
+      const hasBaseUOM = factor > 1;
+
+      if (!hasBaseUOM) {
+        nextRow.baseQty = 0;
+        nextRow.avgCostBase = 0;
+      }
+
       nextRow.lineTotal = computeLineTotal(nextRow);
       nextItems[rowIndex] = nextRow;
       return { ...prev, items: nextItems };
@@ -305,10 +459,14 @@ const GRNCreateModal = ({
     setForm((prev) => {
       const nextItems = [...prev.items];
       const source = nextItems[index] || buildEmptyRow();
+      const factor = Number(source.factorToBase) || 1;
+      const hasBaseUOM = factor > 1;
+
       const copy = {
         ...source,
         primaryQty: 0,
         baseQty: 0,
+        avgCostBase: hasBaseUOM ? Number(source.avgCostBase || 0) : 0,
         lineTotal: 0,
       };
       nextItems.splice(index + 1, 0, copy);
@@ -354,18 +512,23 @@ const GRNCreateModal = ({
         supplierInvoiceDate: form.supplierInvoiceDate || null,
         receivedDate: form.receivedDate,
         totalValue,
-        items: form.items.map((i) => ({
-          item: i.item,
-          primaryQty: Number(i.primaryQty) || 0,
-          baseQty: Number(i.baseQty) || 0,
-          avgCostBase: Number(i.avgCostBase) || 0,
-          avgCostPrimary: Number(i.avgCostPrimary) || 0,
-          factorToBase: Number(i.factorToBase) || 1,
-          discountPerUnit:
-            i.discountPerUnit === "" || i.discountPerUnit == null
-              ? 0
-              : Number(i.discountPerUnit || 0),
-        })),
+        items: form.items.map((i) => {
+          const factor = Number(i.factorToBase) || 1;
+          const hasBaseUOM = factor > 1;
+
+          return {
+            item: i.item,
+            primaryQty: Number(i.primaryQty) || 0,
+            baseQty: hasBaseUOM ? Number(i.baseQty) || 0 : 0,
+            avgCostBase: hasBaseUOM ? Number(i.avgCostBase) || 0 : 0,
+            avgCostPrimary: Number(i.avgCostPrimary) || 0,
+            factorToBase: factor,
+            discountPerUnit:
+              i.discountPerUnit === "" || i.discountPerUnit == null
+                ? 0
+                : Number(i.discountPerUnit || 0),
+          };
+        }),
         ...(isAdminOrDataEntry ? { salesRep: form.salesRep } : {}),
       };
 
@@ -639,7 +802,7 @@ const GRNCreateModal = ({
           border-color: #e5e7eb !important;
           cursor: not-allowed;
         }
-          
+
         .grn-summary-strip {
           border: 1px solid #e9ecef;
           border-radius: 12px;
@@ -665,7 +828,7 @@ const GRNCreateModal = ({
           color: #475467;
           font-size: 12px;
           font-weight: 600;
-        }          
+        }
       `}</style>
 
       <Modal.Header closeButton>
@@ -702,8 +865,10 @@ const GRNCreateModal = ({
             {(isView || isEdit) && (
               <div className="small text-muted mt-1">
                 {selectedSupplier?.name || selectedGRN?.supplier?.name || "-"} •{" "}
-                {selectedBranchLabel !== "-" ? selectedBranchLabel : selectedGRN?.branch?.name || "-"} •{" "}
-                {formatDateText(form.receivedDate)}
+                {selectedBranchLabel !== "-"
+                  ? selectedBranchLabel
+                  : selectedGRN?.branch?.name || "-"}{" "}
+                • {formatDateText(form.receivedDate)}
               </div>
             )}
           </div>
@@ -722,44 +887,43 @@ const GRNCreateModal = ({
 
       <Modal.Body>
         <form onSubmit={handleSubmit}>
-
-        {/* Summary strip */}
-        <div className="grn-summary-strip">
-          <div className="grn-chip-row">
-            <span className="grn-chip">
-              <i className="bi bi-upc-scan" />
-              GRN: {form.grnNo}
-            </span>
-
-            <span className="grn-chip">
-              <i className="bi bi-truck" />
-              Supplier: {selectedSupplierLabel}
-            </span>
-
-            <span className="grn-chip">
-              <i className="bi bi-diagram-3" />
-              Branch: {selectedBranchLabel}
-            </span>
-
-            <span className="grn-chip">
-              <i className="bi bi-box-seam" />
-              Items: {selectedRowCount}
-            </span>
-
-            <span className="grn-chip">
-              <i className="bi bi-calendar-event" />
-              Received: {formatDateText(form.receivedDate)}
-            </span>
-
-            {isSalesRep && (
+          {/* Summary strip */}
+          <div className="grn-summary-strip">
+            <div className="grn-chip-row">
               <span className="grn-chip">
-                <i className="bi bi-lock" />
-                Sales Rep auto-filled
+                <i className="bi bi-upc-scan" />
+                GRN: {form.grnNo}
               </span>
-            )}
+
+              <span className="grn-chip">
+                <i className="bi bi-truck" />
+                Supplier: {selectedSupplierLabel}
+              </span>
+
+              <span className="grn-chip">
+                <i className="bi bi-diagram-3" />
+                Branch: {selectedBranchLabel}
+              </span>
+
+              <span className="grn-chip">
+                <i className="bi bi-box-seam" />
+                Items: {selectedRowCount}
+              </span>
+
+              <span className="grn-chip">
+                <i className="bi bi-calendar-event" />
+                Received: {formatDateText(form.receivedDate)}
+              </span>
+
+              {isSalesRep && (
+                <span className="grn-chip">
+                  <i className="bi bi-lock" />
+                  Sales Rep auto-filled
+                </span>
+              )}
+            </div>
           </div>
-        </div>       
-           
+
           {!form.supplier && !isView && (
             <div className="alert alert-info py-2 mb-3 d-flex align-items-center gap-2">
               <i className="bi bi-info-circle" />
@@ -787,7 +951,8 @@ const GRNCreateModal = ({
                       form.branch
                         ? {
                             label:
-                              branches.find((b) => String(b._id) === String(form.branch))?.name || "",
+                              branches.find((b) => String(b._id) === String(form.branch))
+                                ?.name || "",
                             value: form.branch,
                           }
                         : null
@@ -815,7 +980,8 @@ const GRNCreateModal = ({
                       form.supplier
                         ? {
                             label:
-                              suppliers.find((s) => String(s._id) === String(form.supplier))?.name || "",
+                              suppliers.find((s) => String(s._id) === String(form.supplier))
+                                ?.name || "",
                             value: form.supplier,
                           }
                         : null
@@ -968,13 +1134,23 @@ const GRNCreateModal = ({
                 <tbody>
                   {form.items.map((row, i) => {
                     const selectedItem = items.find((it) => String(it._id) === String(row.item));
-                    const hasBaseUOM = !!selectedItem?.baseUom;
 
-                    const primaryUom = selectedItem?.primaryUom || "Primary";
-                    const baseUom = selectedItem?.baseUom || "Base";
                     const factorToBase = Number(
                       row.factorToBase || selectedItem?.factorToBase || 1
                     );
+
+                    // Base fields enabled only if factorToBase > 1
+                    const hasBaseUOM = factorToBase > 1;
+
+                    const primaryUom =
+                      selectedItem?.primaryUom ||
+                      selectedItem?.primaryUnit ||
+                      selectedItem?.baseUom ||
+                      selectedItem?.baseUnit ||
+                      "Primary";
+
+                    const baseUom =
+                      selectedItem?.baseUom || selectedItem?.baseUnit || "Base";
 
                     const rowClass = [
                       hoveredRowIndex === i ? "row-hover" : "",
@@ -1007,20 +1183,25 @@ const GRNCreateModal = ({
                             }
                             onChange={(opt) => {
                               if (isView) return;
-                              const sel = items.find((it) => String(it._id) === String(opt?.value));
+                              const sel = items.find(
+                                (it) => String(it._id) === String(opt?.value)
+                              );
 
                               if (!opt) {
                                 updateRow(i, buildEmptyRow());
                                 return;
                               }
 
+                              const nextFactor = Number(sel?.factorToBase || 1);
+                              const allowBase = nextFactor > 1;
+
                               updateRow(i, {
                                 item: opt.value,
                                 primaryQty: 0,
                                 baseQty: 0,
-                                avgCostBase: Number(sel?.avgCostBase || 0),
+                                avgCostBase: allowBase ? Number(sel?.avgCostBase || 0) : 0,
                                 avgCostPrimary: Number(sel?.avgCostPrimary || 0),
-                                factorToBase: Number(sel?.factorToBase || 1),
+                                factorToBase: nextFactor,
                                 discountPerUnit: 0,
                               });
                             }}
@@ -1118,7 +1299,7 @@ const GRNCreateModal = ({
                                 : row.baseQty
                             }
                             readOnly={isView || !hasBaseUOM}
-                            disabled={isView || !hasBaseUOM}
+                            disabled={!hasBaseUOM}
                             placeholder={hasBaseUOM ? "Qty" : "N/A"}
                             onChange={(e) => {
                               if (!hasBaseUOM) return;
@@ -1144,7 +1325,7 @@ const GRNCreateModal = ({
                                 : row.avgCostBase
                             }
                             readOnly={isView || !hasBaseUOM}
-                            disabled={isView || !hasBaseUOM}
+                            disabled={!hasBaseUOM}
                             placeholder={hasBaseUOM ? "Cost" : "N/A"}
                             onChange={(e) => {
                               if (!hasBaseUOM) return;
@@ -1230,52 +1411,28 @@ const GRNCreateModal = ({
               </table>
             </div>
 
-          {/* Summary bar */}
-          <div className="grn-summary-bar">
-            <div className="d-flex justify-content-end align-items-center">
-              <div className="text-end">
-                <div className="small text-muted">Grand Total</div>
-                <div className="fw-bold" style={{ fontSize: "1rem", color: "#111827" }}>
-                  {formatCurrency(totalValue)}
+            {/* Summary bar */}
+            <div className="grn-summary-bar">
+              <div className="d-flex justify-content-end align-items-center">
+                <div className="text-end">
+                  <div className="small text-muted">Grand Total</div>
+                  <div className="fw-bold" style={{ fontSize: "1rem", color: "#111827" }}>
+                    {formatCurrency(totalValue)}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
           </div>
 
           {/* Footer actions */}
           <div className="grn-footer-bar">
             <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
               <div className="small text-muted">
-                {isView
-                  ? "Read-only view"
-                  : "Tip: Select supplier first to load supplier-specific items."}
-              </div>
-
-              <div className="d-flex align-items-center gap-2">
                 {isView ? (
-                  <>
-                    {selectedGRN && selectedGRN.items && selectedGRN.items.length > 0 && (
-                      <PDFDownloadLink
-                        document={<GRNPDF grn={selectedGRN} />}
-                        fileName={`${selectedGRN?.grnNo || "GRN"}.pdf`}
-                        style={{ textDecoration: "none" }}
-                      >
-                        {({ loading: pdfLoading }) => (
-                          <Button className="action-btn-modal">
-                            {pdfLoading ? (
-                              "Preparing PDF..."
-                            ) : (
-                              <>
-                                <i className="bi bi-file-earmark-pdf me-2" />
-                                Export PDF
-                              </>
-                            )}
-                          </Button>
-                        )}
-                      </PDFDownloadLink>
-                    )}
-                  </>
+                  <Button type="button" variant="outline-secondary" onClick={handlePrintGRN}>
+                    <i className="bi bi-printer me-2" />
+                    Print
+                  </Button>
                 ) : (
                   <Button type="submit" className="action-btn-modal" disabled={loading}>
                     {loading ? (
@@ -1302,6 +1459,11 @@ const GRNCreateModal = ({
                 )}
               </div>
             </div>
+          </div>
+
+          {/* Hidden print template */}
+          <div style={{ position: "absolute", left: "-99999px", top: 0 }}>
+            <GRNPrintTemplate ref={printRef} grn={printableGRN} />
           </div>
         </form>
       </Modal.Body>

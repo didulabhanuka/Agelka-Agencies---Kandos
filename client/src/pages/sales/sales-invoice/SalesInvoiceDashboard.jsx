@@ -7,6 +7,7 @@ import {
   listSalesInvoices,
   getSalesInvoice,
   approveSalesInvoice,
+  deleteSalesInvoice, 
   getSalesReturn,
 } from "../../../lib/api/sales.api";
 
@@ -365,6 +366,22 @@ const SalesInvoiceDashboard = () => {
     }
   };
 
+    const deleteInvoice = async (inv) => {
+    if (!window.confirm(`Are you sure you want to delete invoice ${inv.invoiceNo}?`)) return;
+
+    try {
+      setLoading(true);
+      const res = await deleteSalesInvoice(inv._id);
+      toast.success(res?.message || "Invoice deleted successfully.");
+      await fetchAll();  // Reload the invoices
+    } catch (err) {
+      console.error("Failed to delete invoice:", err);
+      toast.error(err?.response?.data?.message || "Failed to delete invoice.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const approve = async (inv) => {
     if (inv.status !== "waiting_for_approval") {
       toast.info("Only invoices waiting for approval can be approved.");
@@ -639,6 +656,23 @@ const SalesInvoiceDashboard = () => {
             min-width: 160px;
           }
 
+        .btn-soft {
+          border: 1px solid #e5e7eb;
+          background: #fff;
+          color: #344054;
+          border-radius: 10px;
+          padding: 8px 12px;
+          font-size: 13px;
+          font-weight: 600;
+          min-height: 42px;
+          white-space: nowrap;
+        }
+
+        .btn-soft:hover {
+          background: #f9fafb;
+          border-color: #d0d5dd;
+        }
+
           .result-badge {
             display: inline-flex;
             align-items: center;
@@ -767,7 +801,7 @@ const SalesInvoiceDashboard = () => {
 
             <button
               type="button"
-              className="btn btn-light border"
+              className="btn-soft"
               onClick={resetFilters}
               title="Reset all filters"
             >
@@ -951,6 +985,14 @@ const SalesInvoiceDashboard = () => {
                                 onClick={() => handleEdit(inv)}
                               >
                                 <i className="bi bi-pencil-square" />
+                              </button>
+
+                              <button
+                                className="icon-btn-ux delete"
+                                title="Delete Invoice"
+                                onClick={() => deleteInvoice(inv)}  // Call delete function
+                              >
+                                <i className="bi bi-trash" />
                               </button>
 
                               {isAdminOrDataEntry && (

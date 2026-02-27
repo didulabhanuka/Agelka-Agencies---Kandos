@@ -16,6 +16,7 @@ const {
 const REFRESH_COOKIE_NAME = process.env.REFRESH_COOKIE_NAME || "rt";
 const isProd = process.env.NODE_ENV === "production";
 
+// Refresh token cookie settings (HTTP-only, secure in production, refresh path only, 30-day expiry).
 const refreshCookieOpts = {
   httpOnly: true,
   secure: isProd,
@@ -24,13 +25,13 @@ const refreshCookieOpts = {
   maxAge: 30 * 24 * 60 * 60 * 1000,
 };
 
-// POST /api/auth/login  (single login for everyone)
+// POST /api/auth/login - Unified login endpoint for internal users and sales reps.
 exports.login = async (req, res, next) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) throw new ApiError(400, "Username and password required");
 
-    // 1) Try User (Admin/DataEntry)
+    // Try internal user authentication first (Admin / DataEntry).
     const user = await authService.loginUser({ username, password });
     if (user) {
       const accessToken = signAccessTokenForUser(user);
@@ -49,7 +50,7 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    // 2) Fallback: SalesRep (repCode = username)
+    // Fallback to sales rep authentication (username is treated as repCode).
     const rep = await authService.loginSalesRep({ repCode: username, password });
     if (rep) {
       const accessToken = signAccessTokenForSalesRep(rep);
@@ -74,13 +75,16 @@ exports.login = async (req, res, next) => {
   }
 };
 
+// POST /api/auth/refresh - Validates refresh cookie and rotates tokens.
 exports.refresh = async (req, res, next) => {
   try {
     const rt = req.cookies[REFRESH_COOKIE_NAME];
     if (!rt) throw new ApiError(401, "No refresh token");
 
+    // Decode and validate refresh token payload.
     const decoded = verifyRefreshToken(rt);
 
+    // Refresh flow for internal users.
     if (decoded.actorType === "User") {
       const user = await User.findById(decoded.userId).lean();
       if (!user || !user.active) throw new ApiError(403, "Account disabled");
@@ -96,6 +100,7 @@ exports.refresh = async (req, res, next) => {
       });
     }
 
+    // Refresh flow for sales reps.
     if (decoded.actorType === "SalesRep") {
       const rep = await SalesRep.findById(decoded.salesRepId).lean();
       if (!rep || rep.status !== "active") throw new ApiError(403, "Account disabled");
@@ -117,6 +122,7 @@ exports.refresh = async (req, res, next) => {
   }
 };
 
+// POST /api/auth/logout - Clears refresh token cookie.
 exports.logout = async (_req, res) => {
   res.clearCookie(REFRESH_COOKIE_NAME, { ...refreshCookieOpts, maxAge: 0 });
   res.json({ ok: true });

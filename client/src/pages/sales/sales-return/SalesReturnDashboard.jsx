@@ -8,6 +8,7 @@ import {
   getSalesReturn,
   approveSalesReturn,
   getSalesInvoice,
+  deleteSalesReturn,
 } from "../../../lib/api/sales.api";
 
 import { listBranches } from "../../../lib/api/settings.api";
@@ -40,9 +41,7 @@ const SalesReturnDashboard = () => {
 
   // Local state
   const [loading, setLoading] = useState(false);
-
   const [returns, setReturns] = useState([]);
-
   const [branches, setBranches] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [salesReps, setSalesReps] = useState([]);
@@ -54,7 +53,7 @@ const SalesReturnDashboard = () => {
   const [statusFilter, setStatusFilter] = useState("All");
   const [salesRepFilter, setSalesRepFilter] = useState("All");
 
-  // ✅ Column sorting (GRN-style)
+  // Column sorting
   const [sortConfig, setSortConfig] = useState({
     key: "returnDate",
     direction: "desc",
@@ -63,7 +62,7 @@ const SalesReturnDashboard = () => {
   // Modals
   const [selectedReturn, setSelectedReturn] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState("create"); // create | view
+  const [modalMode, setModalMode] = useState("create"); // create | view | edit
 
   // Invoice View Modal
   const [invoiceViewOpen, setInvoiceViewOpen] = useState(false);
@@ -92,7 +91,6 @@ const SalesReturnDashboard = () => {
       const rows = Array.isArray(retRes) ? retRes : retRes?.data || [];
 
       setReturns(rows);
-
       setBranches(branchRes?.data || branchRes || []);
       setCustomers(custRes || []);
       setSalesReps(isAdminOrDataEntry ? srRes?.data || srRes || [] : []);
@@ -146,14 +144,6 @@ const SalesReturnDashboard = () => {
   const getReturnSalesRepCode = (ret) =>
     ret?.salesRep?.repCode || ret?.originalInvoice?.salesRep?.repCode || "";
 
-  const getCustomerCreditClass = (creditStatus) => {
-    const value = String(creditStatus || "").toLowerCase();
-
-    if (value.includes("cash")) return "mini-pill neutral";
-    if (value.includes("credit")) return "mini-pill info";
-    return "mini-pill neutral";
-  };
-
   const getStatusMeta = (status) => {
     switch (status) {
       case "approved":
@@ -187,7 +177,7 @@ const SalesReturnDashboard = () => {
   const getReturnTotal = (ret) =>
     Number(ret?.totalReturnValue || ret?.totalValue || 0);
 
-  // ✅ Sort helpers
+  // Sort helpers
   const getSortValue = (ret, key) => {
     switch (key) {
       case "returnNo":
@@ -216,15 +206,9 @@ const SalesReturnDashboard = () => {
   const handleSort = (key) => {
     setSortConfig((prev) => {
       if (prev.key === key) {
-        return {
-          key,
-          direction: prev.direction === "asc" ? "desc" : "asc",
-        };
+        return { key, direction: prev.direction === "asc" ? "desc" : "asc" };
       }
-      return {
-        key,
-        direction: "asc",
-      };
+      return { key, direction: "asc" };
     });
   };
 
@@ -233,12 +217,11 @@ const SalesReturnDashboard = () => {
     return sortConfig.direction === "asc" ? "bi-sort-down" : "bi-sort-up";
   };
 
-  // ✅ Filters + sorting via useMemo
+  // Filters + sorting via useMemo
   const filteredReturns = useMemo(() => {
     let data = [...returns];
     const s = search.trim().toLowerCase();
 
-    // SalesRep sees own returns only
     if (isSalesRep && loggedInSalesRepId) {
       data = data.filter((ret) => {
         const srId = getReturnSalesRepId(ret);
@@ -246,7 +229,6 @@ const SalesReturnDashboard = () => {
       });
     }
 
-    // Search
     if (s) {
       data = data.filter((ret) => {
         const returnNo = ret.returnNo?.toLowerCase() || "";
@@ -268,31 +250,27 @@ const SalesReturnDashboard = () => {
       });
     }
 
-    // Customer filter
     if (customerFilter !== "All") {
       data = data.filter((ret) => ret.customer?._id === customerFilter);
     }
 
-    // Branch filter
     if (branchFilter !== "All") {
       data = data.filter((ret) => ret.branch?._id === branchFilter);
     }
 
-    // Status filter
     if (statusFilter !== "All") {
       data = data.filter((ret) => ret.status === statusFilter);
     }
 
-    // Sales rep filter (admin/dataentry only)
     if (isAdminOrDataEntry && salesRepFilter !== "All") {
-      data = data.filter((ret) => String(getReturnSalesRepId(ret)) === String(salesRepFilter));
+      data = data.filter(
+        (ret) => String(getReturnSalesRepId(ret)) === String(salesRepFilter)
+      );
     }
 
-    // Sort
     data.sort((a, b) => {
       const aVal = getSortValue(a, sortConfig.key);
       const bVal = getSortValue(b, sortConfig.key);
-
       if (aVal < bVal) return sortConfig.direction === "asc" ? -1 : 1;
       if (aVal > bVal) return sortConfig.direction === "asc" ? 1 : -1;
       return 0;
@@ -345,6 +323,21 @@ const SalesReturnDashboard = () => {
     }
   };
 
+  const handleEdit = async (ret) => {
+    try {
+      setLoading(true);
+      const full = await getSalesReturn(ret._id);
+      setSelectedReturn(full);
+      setModalMode("edit");
+      setModalOpen(true);
+    } catch (err) {
+      console.error("Failed to load return for editing:", err);
+      toast.error("Failed to load sales return for editing.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleApprove = async (ret) => {
     if (ret.status !== "waiting_for_approval") {
       toast.info("Only returns waiting for approval can be approved.");
@@ -361,6 +354,23 @@ const SalesReturnDashboard = () => {
     } catch (err) {
       console.error("Failed approving sales return:", err);
       toast.error(err?.response?.data?.message || "Failed to approve sales return.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Renamed to avoid conflict with the imported deleteSalesReturn
+  const handleDelete = async (ret) => {
+    if (!window.confirm(`Are you sure you want to delete return ${ret.returnNo}?`)) return;
+
+    try {
+      setLoading(true);
+      const res = await deleteSalesReturn(ret._id);
+      toast.success(res?.message || "Sales return deleted successfully.");
+      await fetchAll();
+    } catch (err) {
+      console.error("Failed to delete sales return:", err);
+      toast.error(err?.response?.data?.message || "Failed to delete sales return.");
     } finally {
       setLoading(false);
     }
@@ -405,7 +415,6 @@ const SalesReturnDashboard = () => {
 
   return (
     <div className="container-fluid py-4 px-5">
-      {/* Local dashboard styles */}
       <style>
         {`
           .return-table-wrap {
@@ -413,7 +422,6 @@ const SalesReturnDashboard = () => {
             overflow: auto;
             border-radius: 14px;
           }
-
           .return-table-wrap .modern-table thead th {
             position: sticky;
             top: 0;
@@ -422,198 +430,70 @@ const SalesReturnDashboard = () => {
             box-shadow: inset 0 -1px 0 #eef0f3;
             white-space: nowrap;
           }
-
           .return-row {
             transition: background-color .15s ease, box-shadow .15s ease;
           }
-
           .return-row:hover {
             background: #fafbff;
             box-shadow: inset 3px 0 0 #5c3e94;
           }
-
-          .col-return-main {
-            min-width: 170px;
-          }
-
-          .return-no {
-            font-weight: 700;
-            color: #111827;
-            letter-spacing: 0.01em;
-          }
-
-          .return-sub {
-            font-size: 12px;
-            color: #6b7280;
-            margin-top: 2px;
-          }
-
+          .col-return-main { min-width: 170px; }
+          .return-no { font-weight: 700; color: #111827; letter-spacing: 0.01em; }
+          .return-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
           .mini-pill {
-            display: inline-flex;
-            align-items: center;
-            padding: 2px 8px;
-            border-radius: 999px;
-            font-size: 11px;
-            font-weight: 600;
-            margin-top: 4px;
-            border: 1px solid transparent;
+            display: inline-flex; align-items: center; padding: 2px 8px;
+            border-radius: 999px; font-size: 11px; font-weight: 600;
+            margin-top: 4px; border: 1px solid transparent;
           }
-
-          .mini-pill.neutral {
-            background: #f3f4f6;
-            color: #4b5563;
-            border-color: #e5e7eb;
-          }
-
-          .mini-pill.info {
-            background: #eff6ff;
-            color: #1d4ed8;
-            border-color: #bfdbfe;
-          }
-
+          .mini-pill.neutral { background: #f3f4f6; color: #4b5563; border-color: #e5e7eb; }
+          .mini-pill.info { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
           .status-pill-ux {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            border-radius: 999px;
-            font-size: 12px;
-            font-weight: 700;
-            padding: 4px 10px;
-            border: 1px solid transparent;
-            white-space: nowrap;
+            display: inline-flex; align-items: center; gap: 6px;
+            border-radius: 999px; font-size: 12px; font-weight: 700;
+            padding: 4px 10px; border: 1px solid transparent; white-space: nowrap;
           }
-
-          .status-pill-ux.pill-success {
-            background: #ecfdf3;
-            color: #027a48;
-            border-color: #abefc6;
-          }
-
-          .status-pill-ux.pill-warning {
-            background: #fffaeb;
-            color: #b54708;
-            border-color: #fedf89;
-          }
-
-          .status-pill-ux.pill-danger {
-            background: #fef3f2;
-            color: #b42318;
-            border-color: #fecdca;
-          }
-
-          .status-pill-ux.pill-muted {
-            background: #f2f4f7;
-            color: #475467;
-            border-color: #e4e7ec;
-          }
-
-          .amount-stack {
-            line-height: 1.25;
-            min-width: 160px;
-          }
-
-          .amount-main {
-            font-weight: 700;
-            color: #111827;
-          }
-
-          .amount-sub {
-            font-size: 12px;
-            color: #6b7280;
-            margin-top: 2px;
-          }
-
-          .amount-sub.invoice {
-            color: #1d4ed8;
-          }
-
+          .status-pill-ux.pill-success { background: #ecfdf3; color: #027a48; border-color: #abefc6; }
+          .status-pill-ux.pill-warning { background: #fffaeb; color: #b54708; border-color: #fedf89; }
+          .status-pill-ux.pill-danger { background: #fef3f2; color: #b42318; border-color: #fecdca; }
+          .status-pill-ux.pill-muted { background: #f2f4f7; color: #475467; border-color: #e4e7ec; }
+          .amount-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
+          .amount-sub.invoice { color: #1d4ed8; }
           .icon-btn-ux {
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            border: 1px solid #e5e7eb;
-            background: #fff;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
+            width: 32px; height: 32px; border-radius: 8px;
+            border: 1px solid #e5e7eb; background: #fff;
+            display: inline-flex; align-items: center; justify-content: center;
             transition: all .15s ease;
           }
-
-          .icon-btn-ux:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 10px rgba(0,0,0,.08);
+          .icon-btn-ux:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,.08); }
+          .icon-btn-ux.view:hover { color: #1d4ed8; border-color: #bfdbfe; background: #eff6ff; }
+          .icon-btn-ux.edit:hover { color: #b45309; border-color: #fde68a; background: #fffbeb; }
+          .icon-btn-ux.delete { border-color: #fecdca; background: #fff5f5; color: #b42318; }
+          .icon-btn-ux.delete:hover { background: #fef2f2; box-shadow: 0 4px 12px rgba(180,35,24,.18); }
+          .icon-btn-ux.approve { border-color: #abefc6; background: #f6fef9; color: #027a48; }
+          .icon-btn-ux.approve:hover { background: #ecfdf3; box-shadow: 0 4px 12px rgba(2,122,72,.18); }
+          .filter-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+          .filter-grid .filter-input { min-width: 220px; }
+          .filter-grid .custom-select { min-width: 160px; }
+          .btn-soft {
+            border: 1px solid #e5e7eb; background: #fff; color: #344054;
+            border-radius: 10px; padding: 8px 12px; font-size: 13px;
+            font-weight: 600; min-height: 42px; white-space: nowrap;
           }
-
-          .icon-btn-ux.view:hover {
-            color: #1d4ed8;
-            border-color: #bfdbfe;
-            background: #eff6ff;
-          }
-
-          .icon-btn-ux.approve {
-            border-color: #abefc6;
-            background: #f6fef9;
-            color: #027a48;
-          }
-
-          .icon-btn-ux.approve:hover {
-            background: #ecfdf3;
-            box-shadow: 0 4px 12px rgba(2,122,72,.18);
-          }
-
-          .filter-grid {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            align-items: center;
-          }
-
-          .filter-grid .filter-input {
-            min-width: 220px;
-          }
-
-          .filter-grid .custom-select {
-            min-width: 160px;
-          }
-
+          .btn-soft:hover { background: #f9fafb; border-color: #d0d5dd; }
           .result-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 10px;
-            border-radius: 999px;
-            background: #f8fafc;
-            border: 1px solid #e5e7eb;
-            font-size: 12px;
-            font-weight: 700;
-            color: #475467;
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 10px; border-radius: 999px; background: #f8fafc;
+            border: 1px solid #e5e7eb; font-size: 12px; font-weight: 700; color: #475467;
           }
-
           .table-top-note {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 10px;
-            flex-wrap: wrap;
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 10px; margin-bottom: 10px; flex-wrap: wrap;
           }
-
-          /* ✅ Sortable header button */
           .sort-btn {
-            border: none;
-            background: transparent;
-            padding: 0;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            cursor: pointer;
-            color: inherit;
+            border: none; background: transparent; padding: 0; font-weight: 600;
+            display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: inherit;
           }
-
-          .sort-btn:hover {
-            color: #5c3e94;
-          }
+          .sort-btn:hover { color: #5c3e94; }
         `}
       </style>
 
@@ -692,7 +572,7 @@ const SalesReturnDashboard = () => {
 
             <button
               type="button"
-              className="btn btn-light border"
+              className="btn-soft"
               onClick={resetFilters}
               title="Reset all filters"
             >
@@ -732,19 +612,11 @@ const SalesReturnDashboard = () => {
                     Return <i className={`bi ${getSortIcon("returnNo")}`} />
                   </button>
                 </th>
-
                 <th>
                   <button className="sort-btn" onClick={() => handleSort("customer")}>
                     Customer <i className={`bi ${getSortIcon("customer")}`} />
                   </button>
                 </th>
-
-                {/* <th>
-                  <button className="sort-btn" onClick={() => handleSort("branch")}>
-                    Branch <i className={`bi ${getSortIcon("branch")}`} />
-                  </button>
-                </th> */}
-
                 {isAdminOrDataEntry && (
                   <th>
                     <button className="sort-btn" onClick={() => handleSort("salesRep")}>
@@ -752,25 +624,21 @@ const SalesReturnDashboard = () => {
                     </button>
                   </th>
                 )}
-
                 <th>
                   <button className="sort-btn" onClick={() => handleSort("invoiceNo")}>
                     Invoice <i className={`bi ${getSortIcon("invoiceNo")}`} />
                   </button>
                 </th>
-
                 <th>
                   <button className="sort-btn" onClick={() => handleSort("amount")}>
                     Amount <i className={`bi ${getSortIcon("amount")}`} />
                   </button>
                 </th>
-
                 <th>
                   <button className="sort-btn" onClick={() => handleSort("status")}>
                     Status <i className={`bi ${getSortIcon("status")}`} />
                   </button>
                 </th>
-
                 <th>Actions</th>
               </tr>
             </thead>
@@ -783,24 +651,17 @@ const SalesReturnDashboard = () => {
 
                   return (
                     <tr key={ret._id} className="return-row">
-                      {/* Return column */}
                       <td className="col-return-main">
                         <div className="return-no">{ret.returnNo || "-"}</div>
                         <div className="return-sub">{formatDate(ret.returnDate)}</div>
                       </td>
 
-                      {/* Customer */}
                       <td>{ret.customer?.name || "-"}</td>
 
-                      {/* Branch
-                      <td>{ret.branch?.name || "-"}</td> */}
-
-                      {/* Sales Rep */}
                       {isAdminOrDataEntry && (
                         <td>{getReturnSalesRepName(ret)}</td>
                       )}
 
-                      {/* Original Invoice */}
                       <td>
                         <div className="fw-semibold">
                           {ret.originalInvoice?.invoiceNo || "-"}
@@ -808,10 +669,8 @@ const SalesReturnDashboard = () => {
                         <div className="amount-sub invoice">Original Invoice</div>
                       </td>
 
-                      {/* Amount */}
                       <td>{formatCurrency(total)}</td>
 
-                      {/* Status */}
                       <td>
                         <span className={`status-pill-ux ${statusMeta.className}`}>
                           <i className={`bi ${statusMeta.icon}`} />
@@ -819,9 +678,9 @@ const SalesReturnDashboard = () => {
                         </span>
                       </td>
 
-                      {/* Actions */}
                       <td>
                         <div className="d-flex align-items-center gap-1">
+                          {/* View — always visible */}
                           <button
                             className="icon-btn-ux view"
                             onClick={() => handleView(ret)}
@@ -830,14 +689,35 @@ const SalesReturnDashboard = () => {
                             <i className="bi bi-eye" />
                           </button>
 
-                          {isAdminOrDataEntry && ret.status === "waiting_for_approval" && (
-                            <button
-                              className="icon-btn-ux approve"
-                              onClick={() => handleApprove(ret)}
-                              title="Approve Sales Return"
-                            >
-                              <i className="bi bi-check-circle" />
-                            </button>
+                          {/* Edit / Delete / Approve — only while waiting for approval */}
+                          {ret.status === "waiting_for_approval" && (
+                            <>
+                              <button
+                                className="icon-btn-ux edit"
+                                onClick={() => handleEdit(ret)}
+                                title="Edit Sales Return"
+                              >
+                                <i className="bi bi-pencil-square" />
+                              </button>
+
+                              <button
+                                className="icon-btn-ux delete"
+                                onClick={() => handleDelete(ret)}
+                                title="Delete Sales Return"
+                              >
+                                <i className="bi bi-trash" />
+                              </button>
+
+                              {isAdminOrDataEntry && (
+                                <button
+                                  className="icon-btn-ux approve"
+                                  onClick={() => handleApprove(ret)}
+                                  title="Approve Sales Return"
+                                >
+                                  <i className="bi bi-check-circle" />
+                                </button>
+                              )}
+                            </>
                           )}
                         </div>
                       </td>
@@ -856,7 +736,7 @@ const SalesReturnDashboard = () => {
         </div>
       </div>
 
-      {/* Return modal */}
+      {/* Return modal — handles create / view / edit */}
       {modalOpen && (
         <SalesReturnCreateModal
           show={modalOpen}

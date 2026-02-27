@@ -1,4 +1,4 @@
-// controllers/inventory/stockLedger.controller.js
+// controllers/ledger/stockLedger.controller.js
 const { asyncHandler } = require("../../utils/asyncHandler");
 const { ApiError } = require("../../middlewares/error");
 const Branch = require("../../models/inventorySettings/branch.model");
@@ -10,6 +10,7 @@ const {
   getStockSnapshot,
 } = require("../../services/ledger/stockLedger.service");
 
+// Normalizes query date strings into inclusive day-bound Date objects.
 const normalizeDateRange = (from, to) => {
   let fromDate = null, toDate = null;
   if (from) { fromDate = new Date(from); fromDate.setHours(0, 0, 0, 0); }
@@ -17,15 +18,28 @@ const normalizeDateRange = (from, to) => {
   return { fromDate, toDate };
 };
 
+// Resolves effective sales rep scope (forced self-scope for SalesRep actors, optional query scope for staff).
 function resolveSalesRepScope(req) {
   if (req.authActor?.actorType === "SalesRep") return String(req.authActor.id);
   return req.query.salesRep || null;
 }
 
-// Manual post (staff only route)
+// POST /ledger/stock/manual - Creates a manual stock ledger entry (staff-only route).
 exports.postEntry = asyncHandler(async (req, res) => {
-  const { item, branch, salesRep, transactionType, refModel, refId, qty, avgCostBase, itemTotalValue, remarks } = req.body;
+  const {
+    item,
+    branch,
+    salesRep,
+    transactionType,
+    refModel,
+    refId,
+    qty,
+    avgCostBase,
+    itemTotalValue,
+    remarks,
+  } = req.body;
 
+  // Validate branch before posting the ledger entry.
   if (!branch) throw new ApiError(400, "Branch ID is required");
   const branchDoc = await Branch.findById(branch).lean();
   if (!branchDoc) throw new ApiError(400, "Invalid branch selected");
@@ -47,36 +61,36 @@ exports.postEntry = asyncHandler(async (req, res) => {
   res.status(201).json(entry);
 });
 
+// GET /ledger/stock/balance/:itemId - Returns current stock balance and stock value for one item in a branch.
 exports.getBalance = asyncHandler(async (req, res) => {
   const { itemId } = req.params;
   const branch = req.query.branch;
 
-  // Validate required parameters
+  // Validate required route/query parameters.
   if (!itemId) throw new ApiError(400, "Item ID is required");
   if (!branch) throw new ApiError(400, "Branch ID is required");
 
-  // Fetch the branch document
+  // Resolve and validate branch id.
   const branchDoc = await Branch.findById(branch).lean();
   if (!branchDoc) throw new ApiError(400, "Invalid branch selected");
 
-  // Get the current stock balance for the given item, branch, and sales rep (if applicable)
+  // Read current item balance with sales rep scope applied when relevant.
   const qtyOnHand = await getItemBalance(itemId, branchDoc._id, resolveSalesRepScope(req));
 
-  // Return the response with structured data
   res.json({
     itemId,
     branchId: branchDoc._id,
     branchName: branchDoc.name,
     salesRep: resolveSalesRepScope(req),
     qtyOnHand: {
-      baseQty: qtyOnHand.qtyOnHand?.baseQty || 0,   // Ensure it's always a number, default to 0
-      primaryQty: qtyOnHand.qtyOnHand?.primaryQty || 0  // Ensure it's always a number, default to 0
+      baseQty: qtyOnHand.qtyOnHand?.baseQty || 0,
+      primaryQty: qtyOnHand.qtyOnHand?.primaryQty || 0,
     },
-    itemTotalValue: qtyOnHand.itemTotalValue || 0, // Default to 0 if missing
+    itemTotalValue: qtyOnHand.itemTotalValue || 0,
   });
 });
 
-
+// GET /ledger/stock/history/:itemId - Returns stock ledger history for one item with optional branch and limit filters.
 exports.getHistory = asyncHandler(async (req, res) => {
   const { itemId } = req.params;
   const { branch, limit } = req.query;
@@ -97,6 +111,7 @@ exports.getHistory = asyncHandler(async (req, res) => {
   res.json(history);
 });
 
+// GET /ledger/stock/current - Returns latest on-hand stock rows for the selected branch and sales rep scope.
 exports.getStock = asyncHandler(async (req, res) => {
   const { branch } = req.query;
 
@@ -111,6 +126,7 @@ exports.getStock = asyncHandler(async (req, res) => {
   res.json(rows);
 });
 
+// GET /ledger/stock/snapshot - Returns stock movement and on-hand snapshot for the selected filters.
 exports.snapshot = asyncHandler(async (req, res) => {
   const { branch, from, to } = req.query;
   const { fromDate, toDate } = normalizeDateRange(from, to);

@@ -1,45 +1,32 @@
 // services/inventory/stockLedger.service.js
 const mongoose = require("mongoose");
 const logger = require("../../utils/logger.js");
-
 const StockLedger = require("../../models/ledger/StockLedger.model");
-
-// UOM helpers
 const { formatQtySplit } = require("../../utils/uomDisplay");
 const { calcBaseQty, splitToPrimaryBase } = require("../../utils/uomMath");
 
-//-------------------- [ getLastBalance(): Get Latest Stock Balance for an Item & Branch & SalesRep ] ----------------------
+// Get latest running balance for item + branch (+ optional sales rep stream).
 async function getLastBalance(itemId, branchId, salesRepId, session) {
-  const query = {
-    item: itemId,
-    branch: new mongoose.Types.ObjectId(branchId),
-  };
-
-  // ✅ per-salesRep stream
+  const query = { item: itemId, branch: new mongoose.Types.ObjectId(branchId) };
   if (salesRepId) query.salesRep = new mongoose.Types.ObjectId(salesRepId);
-
-  const last = await StockLedger.findOne(query)
-    .sort({ createdAt: -1, _id: -1 })
-    .session(session)
-    .lean();
-
+  const last = await StockLedger.findOne(query).sort({ createdAt: -1, _id: -1 }).session(session).lean();
   return last ? last.runningBalance : 0;
 }
 
-//-------------------- [ Utility: Convert value to MongoDB ObjectId ] ----------------------
+// Convert value to ObjectId when present.
 function toObjectId(id) {
   if (!id) return null;
   if (id instanceof mongoose.Types.ObjectId) return id;
   return new mongoose.Types.ObjectId(id);
 }
 
-//-------------------- [ Utility: Convert value to number safely ] ----------------------
+// Safely coerce value to finite number.
 function toNumber(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 }
 
-//-------------------- [ postLedger(): Create a Stock Ledger Entry with Validation ] ----------------------
+// Post stock ledger entry with validation and running balance update.
 async function postLedger({
   item,
   branch,
@@ -47,21 +34,14 @@ async function postLedger({
   transactionType,
   refModel,
   refId,
-
-  // multi-UOM
   factorToBase,
   primaryQty,
   baseQty,
-
-  // costs/prices
   avgCostBase = 0,
   avgCostPrimary = 0,
   sellingPriceBase = 0,
   sellingPricePrimary = 0,
-
-  // value
   itemTotalValue = 0,
-
   remarks = "",
   createdBy = null,
   allowNegative = false,
@@ -71,93 +51,62 @@ async function postLedger({
   if (!transactionType) throw new Error("transactionType is required");
   if (!refModel || !refId) throw new Error("refModel and refId are required");
   if (!branch) throw new Error("branch is required for ledger post");
-  if (factorToBase === undefined || factorToBase === null) {
-    throw new Error("factorToBase is required for stock ledger post");
-  }
+  if (factorToBase === undefined || factorToBase === null) throw new Error("factorToBase is required for stock ledger post");
 
-  const directionMap = {
-    purchase: 1,
-    "adj-goods-receive": 1,
-    "sales-return": 1,
-    "adj-sales-return": 1,
-    sale: -1,
-    "adj-sale": -1,
-    "purchase-return": -1,
-    "adj-goods-return": -1,
-  };
-
+  const directionMap = { purchase: 1, "adj-goods-receive": 1, "sales-return": 1, "adj-sales-return": 1, sale: -1, "adj-sale": -1, "purchase-return": -1, "adj-goods-return": -1 };
   const direction = directionMap[transactionType];
-  if (direction === undefined)
-    throw new Error(
-      `Unknown transactionType '${transactionType}' in postLedger`
-    );
+  if (direction === undefined) throw new Error(`Unknown transactionType '${transactionType}' in postLedger`);
 
   const branchObj = new mongoose.Types.ObjectId(branch);
   const salesRepObj = salesRep ? new mongoose.Types.ObjectId(salesRep) : null;
-
   const factorNum = toNumber(factorToBase) || 1;
   const primaryQtyNum = Math.abs(toNumber(primaryQty));
   const baseQtyNum = Math.abs(toNumber(baseQty));
 
-  // ✅ base-equivalent movement (NOT stored, only used for runningBalance)
+  // Compute base-equivalent movement for running balance tracking.
   const qtyBaseEq = calcBaseQty(primaryQtyNum, baseQtyNum, factorNum);
 
-  // previous balance (per item+branch+salesRep)
+  // Read previous balance from the same item/branch/salesRep stream.
   const prevBal = await getLastBalance(item, branchObj, salesRepObj, session);
-
   const signedMovement = qtyBaseEq * direction;
   const newBal = prevBal + signedMovement;
 
-  if (!allowNegative && newBal < 0) {
-    throw new Error(
-      `Insufficient stock at branch ${branch}. Current: ${prevBal}, trying to move: ${signedMovement}`
-    );
-  }
+  // Block negative stock unless explicitly allowed.
+  if (!allowNegative && newBal < 0) throw new Error(`Insufficient stock at branch ${branch}. Current: ${prevBal}, trying to move: ${signedMovement}`);
 
   const safeAvgCostBase = toNumber(avgCostBase);
   const safeAvgCostPrimary = toNumber(avgCostPrimary);
   const safeSellingPriceBase = toNumber(sellingPriceBase);
   const safeSellingPricePrimary = toNumber(sellingPricePrimary);
 
+  // Derive movement value from qty and average costs when not supplied.
   let movementValue = toNumber(itemTotalValue);
-  if (!movementValue) {
-    movementValue =
-      baseQtyNum * safeAvgCostBase + primaryQtyNum * safeAvgCostPrimary;
-  }
+  if (!movementValue) movementValue = baseQtyNum * safeAvgCostBase + primaryQtyNum * safeAvgCostPrimary;
 
-  const [entry] = await StockLedger.create(
-    [
-      {
-        item,
-        branch: branchObj,
-        salesRep: salesRepObj,
-        transactionType,
-        refModel,
-        refId,
-
-        factorToBase: factorNum,
-        primaryQty: primaryQtyNum,
-        baseQty: baseQtyNum,
-
-        avgCostBase: safeAvgCostBase,
-        avgCostPrimary: safeAvgCostPrimary,
-        sellingPriceBase: safeSellingPriceBase,
-        sellingPricePrimary: safeSellingPricePrimary,
-        itemTotalValue: movementValue,
-
-        // ✅ runningBalance is ALWAYS base-equivalent
-        runningBalance: newBal,
-        remarks,
-        createdBy,
-      },
-    ],
-    { session }
-  );
+  const [entry] = await StockLedger.create([{
+    item,
+    branch: branchObj,
+    salesRep: salesRepObj,
+    transactionType,
+    refModel,
+    refId,
+    factorToBase: factorNum,
+    primaryQty: primaryQtyNum,
+    baseQty: baseQtyNum,
+    avgCostBase: safeAvgCostBase,
+    avgCostPrimary: safeAvgCostPrimary,
+    sellingPriceBase: safeSellingPriceBase,
+    sellingPricePrimary: safeSellingPricePrimary,
+    itemTotalValue: movementValue,
+    runningBalance: newBal, // Running balance is always stored in base-equivalent units.
+    remarks,
+    createdBy,
+  }], { session });
 
   return entry.toObject();
 }
 
-//-------------------- [ postStockReturnLedger(): Post a Stock Return Entry ] ----------------------
+// Post stock return ledger entry with normalized quantities and movement value.
 async function postStockReturnLedger({
   item,
   branch,
@@ -165,17 +114,14 @@ async function postStockReturnLedger({
   transactionType,
   refModel,
   refId,
-
   factorToBase,
   primaryQty,
   baseQty,
-
   avgCostBase = 0,
   avgCostPrimary = 0,
   sellingPriceBase = 0,
   sellingPricePrimary = 0,
   itemTotalValue = 0,
-
   remarks = "",
   createdBy = null,
   allowNegative = false,
@@ -184,102 +130,57 @@ async function postStockReturnLedger({
   if (!item) throw new Error("item is required for stock return ledger");
   if (!branch) throw new Error("branch is required for stock return ledger");
   if (!transactionType) throw new Error("transactionType is required");
-  if (!refModel || !refId)
-    throw new Error(
-      "refModel and refId are required for stock return ledger"
-    );
+  if (!refModel || !refId) throw new Error("refModel and refId are required for stock return ledger");
 
   const primaryQtyAbs = Math.abs(toNumber(primaryQty));
   const baseQtyAbs = Math.abs(toNumber(baseQty));
   const costBaseNum = toNumber(avgCostBase);
   const costPrimaryNum = toNumber(avgCostPrimary);
 
+  // Recompute movement value when omitted.
   let movementValue = toNumber(itemTotalValue);
-  if (!movementValue) {
-    movementValue =
-      baseQtyAbs * costBaseNum + primaryQtyAbs * costPrimaryNum;
-  }
+  if (!movementValue) movementValue = baseQtyAbs * costBaseNum + primaryQtyAbs * costPrimaryNum;
 
-  return postLedger({
-    item,
-    branch,
-    salesRep,
-    transactionType,
-    refModel,
-    refId,
-    factorToBase,
-    primaryQty: primaryQtyAbs,
-    baseQty: baseQtyAbs,
-    avgCostBase: costBaseNum,
-    avgCostPrimary: costPrimaryNum,
-    sellingPriceBase,
-    sellingPricePrimary,
-    itemTotalValue: movementValue,
-    remarks,
-    createdBy,
-    allowNegative,
-    session,
-  });
+  return postLedger({ item, branch, salesRep, transactionType, refModel, refId, factorToBase, primaryQty: primaryQtyAbs, baseQty: baseQtyAbs, avgCostBase: costBaseNum, avgCostPrimary: costPrimaryNum, sellingPriceBase, sellingPricePrimary, itemTotalValue: movementValue, remarks, createdBy, allowNegative, session });
 }
 
-//-------------------- [ getItemBalance(): Latest Balance (base-equivalent) ] ----------------------
+// Get latest item balance in base-equivalent units.
 async function getItemBalance(itemId, branchId = null, salesRepId = null) {
   const query = { item: toObjectId(itemId) };
   if (branchId) query.branch = toObjectId(branchId);
   if (salesRepId) query.salesRep = toObjectId(salesRepId);
-
-  const last = await StockLedger.findOne(query)
-    .sort({ createdAt: -1, _id: -1 })
-    .lean();
-
-  // ✅ return base-equivalent runningBalance (number)
+  const last = await StockLedger.findOne(query).sort({ createdAt: -1, _id: -1 }).lean();
   return last ? toNumber(last.runningBalance) : 0;
 }
 
-//-------------------- [ getItemHistory(): Stock Ledger History (SalesRep optional) ] ----------------------
-async function getItemHistory(
-  itemId,
-  { branch = null, salesRep = null, limit = 100 } = {}
-) {
+// Get stock ledger history with optional branch/salesRep filters and qty display formatting.
+async function getItemHistory(itemId, { branch = null, salesRep = null, limit = 100 } = {}) {
   const query = { item: itemId };
   if (branch) query.branch = new mongoose.Types.ObjectId(branch);
   if (salesRep) query.salesRep = new mongoose.Types.ObjectId(salesRep);
 
-  const rows = await StockLedger.find(query)
-    .populate("branch", "name branchCode")
-    .populate("salesRep", "repCode name")
-    .populate("item", "itemCode name primaryUom baseUom factorToBase")
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .lean();
+  const rows = await StockLedger.find(query).populate("branch", "name branchCode").populate("salesRep", "repCode name").populate("item", "itemCode name primaryUom baseUom factorToBase").sort({ createdAt: -1 }).limit(limit).lean();
 
-  // Add qtyDisplay per movement using primaryQty/baseQty
+  // Add formatted split quantity label for each movement row.
   return rows.map((row) => {
-    const primaryLabel = row.item?.primaryUom || "PRIMARY";
-    const baseLabel = row.item?.baseUom || "BASE";
-
-    const p = toNumber(row.primaryQty);
-    const b = toNumber(row.baseQty);
-
-    const qtyDisplay = formatQtySplit({
-      primaryQty: p,
-      baseQty: b,
-      primaryLabel,
-      baseLabel,
-    });
-
-    return {
-      ...row,
-      qtyDisplay,
-    };
+    const primaryLabel = row.item?.primaryUom || "PRIMARY", baseLabel = row.item?.baseUom || "BASE", p = toNumber(row.primaryQty), b = toNumber(row.baseQty);
+    const qtyDisplay = formatQtySplit({ primaryQty: p, baseQty: b, primaryLabel, baseLabel });
+    return { ...row, qtyDisplay };
   });
 }
 
-//-------------------- [ getCurrentStock(): Latest Stock per (item, branch, salesRep) ] ----------------------
+// Get latest current stock snapshot per item + branch + optional sales rep.
 async function getCurrentStock(branchId = null, salesRepId = null) {
   const match = {};
   if (branchId) match.branch = new mongoose.Types.ObjectId(branchId);
   if (salesRepId) match.salesRep = new mongoose.Types.ObjectId(salesRepId);
+
+  const RAW_IN_TYPES = ["purchase", "adj-goods-receive", "sales-return", "adj-sales-return"];
+  const NORM_IN_TYPES = ["purchase", "adj-goods-receive", "adj-sales-return"];
+  const OUT_TYPES = ["sale", "adj-sale", "purchase-return", "adj-goods-return"];
+
+  // Build conditional quantity sum for a given field and transaction type set.
+  const sumQty = (field, types) => ({ $sum: { $cond: [{ $in: ["$transactionType", types] }, { $ifNull: [`$${field}`, 0] }, 0] } });
 
   const pipeline = [
     { $match: match },
@@ -293,65 +194,12 @@ async function getCurrentStock(branchId = null, salesRepId = null) {
         sellingPriceBaseLedger: { $first: "$sellingPriceBase" },
         sellingPricePrimaryLedger: { $first: "$sellingPricePrimary" },
         factorToBaseLedger: { $first: "$factorToBase" },
-
-        // RAW movement (exact, sales-return included)
-        inBaseQtyRaw: {
-          $sum: {
-            $cond: [
-              { $in: ["$transactionType", ["purchase", "adj-goods-receive", "sales-return", "adj-sales-return"]] },
-              "$baseQty",
-              0,
-            ],
-          },
-        },
-        inPrimaryQtyRaw: {
-          $sum: {
-            $cond: [
-              { $in: ["$transactionType", ["purchase", "adj-goods-receive", "sales-return", "adj-sales-return"]] },
-              "$primaryQty",
-              0,
-            ],
-          },
-        },
-
-        // Normalized movement (exclude sales-return)
-        inBaseQtyNorm: {
-          $sum: {
-            $cond: [
-              { $in: ["$transactionType", ["purchase", "adj-goods-receive", "adj-sales-return"]] },
-              "$baseQty",
-              0,
-            ],
-          },
-        },
-        inPrimaryQtyNorm: {
-          $sum: {
-            $cond: [
-              { $in: ["$transactionType", ["purchase", "adj-goods-receive", "adj-sales-return"]] },
-              "$primaryQty",
-              0,
-            ],
-          },
-        },
-
-        outBaseQty: {
-          $sum: {
-            $cond: [
-              { $in: ["$transactionType", ["sale", "adj-sale", "purchase-return", "adj-goods-return"]] },
-              "$baseQty",
-              0,
-            ],
-          },
-        },
-        outPrimaryQty: {
-          $sum: {
-            $cond: [
-              { $in: ["$transactionType", ["sale", "adj-sale", "purchase-return", "adj-goods-return"]] },
-              "$primaryQty",
-              0,
-            ],
-          },
-        },
+        inBaseQtyRaw: sumQty("baseQty", RAW_IN_TYPES),
+        inPrimaryQtyRaw: sumQty("primaryQty", RAW_IN_TYPES),
+        inBaseQtyNorm: sumQty("baseQty", NORM_IN_TYPES),
+        inPrimaryQtyNorm: sumQty("primaryQty", NORM_IN_TYPES),
+        outBaseQty: sumQty("baseQty", OUT_TYPES),
+        outPrimaryQty: sumQty("primaryQty", OUT_TYPES),
       },
     },
     { $lookup: { from: "branches", localField: "_id.branch", foreignField: "_id", as: "branchInfo" } },
@@ -387,72 +235,36 @@ async function getCurrentStock(branchId = null, salesRepId = null) {
         factorToBase: 1,
         primaryUom: 1,
         baseUom: 1,
-        inBaseQtyRaw: 1,
-        inPrimaryQtyRaw: 1,
-        inBaseQtyNorm: 1,
-        inPrimaryQtyNorm: 1,
+        inBaseQty: "$inBaseQtyRaw",
+        inPrimaryQty: "$inPrimaryQtyRaw",
         outBaseQty: 1,
         outPrimaryQty: 1,
+        salesReturnBaseQty: { $subtract: ["$inBaseQtyRaw", "$inBaseQtyNorm"] },
+        salesReturnPrimaryQty: { $subtract: ["$inPrimaryQtyRaw", "$inPrimaryQtyNorm"] },
+        _inBaseQtyNorm: "$inBaseQtyNorm",
+        _inPrimaryQtyNorm: "$inPrimaryQtyNorm",
       },
     },
   ];
 
   const rows = await StockLedger.aggregate(pipeline);
 
+  // Normalize on-hand qty while preserving sales-return split exactly as entered.
   return rows.map((row) => {
-  const factor = toNumber(row.factorToBase || 1);
-
-  // ---- RAW + normalized movement combined ----
-  const inBaseNorm = toNumber(row.inBaseQtyNorm || 0);
-  const inPrimaryNorm = toNumber(row.inPrimaryQtyNorm || 0);
-  const outBase = toNumber(row.outBaseQty || 0);
-  const outPrimary = toNumber(row.outPrimaryQty || 0);
-
-  const totalMovementNormBase = inBaseNorm - outBase + (inPrimaryNorm - outPrimary) * factor;
-  const { primaryQty: movementPrimaryNorm, baseQty: movementBaseNorm } =
-    splitToPrimaryBase(totalMovementNormBase, factor);
-
-  const salesReturnBase = toNumber(row.inBaseQtyRaw || 0) - inBaseNorm;
-  const salesReturnPrimary = toNumber(row.inPrimaryQtyRaw || 0) - inPrimaryNorm;
-
-  // exact totals
-  const baseQty = movementBaseNorm + salesReturnBase;
-  const primaryQty = movementPrimaryNorm + salesReturnPrimary;
-
-  const qtyOnHand = { baseQty, primaryQty };
-  const qtyOnHandRaw = { ...qtyOnHand }; // same as qtyOnHand
-
-  const qtyDisplay = formatQtySplit({
-    primaryQty,
-    baseQty,
-    primaryLabel: row.primaryUom || "PRIMARY",
-    baseLabel: row.baseUom || "BASE",
+    const factor = toNumber(row.factorToBase || 1);
+    const totalMovementNormBase = (toNumber(row._inBaseQtyNorm) - toNumber(row.outBaseQty)) + (toNumber(row._inPrimaryQtyNorm) - toNumber(row.outPrimaryQty)) * factor;
+    const { primaryQty: movementPrimaryNorm, baseQty: movementBaseNorm } = splitToPrimaryBase(totalMovementNormBase, factor);
+    const baseQty = movementBaseNorm + toNumber(row.salesReturnBaseQty), primaryQty = movementPrimaryNorm + toNumber(row.salesReturnPrimaryQty);
+    const qtyOnHand = { baseQty, primaryQty };
+    const qtyDisplay = formatQtySplit({ primaryQty, baseQty, primaryLabel: row.primaryUom || "PRIMARY", baseLabel: row.baseUom || "BASE" });
+    const itemTotalValue = baseQty * toNumber(row.avgCostBase) + primaryQty * toNumber(row.avgCostPrimary);
+    const { _inBaseQtyNorm, _inPrimaryQtyNorm, ...cleanRow } = row;
+    return { ...cleanRow, qtyOnHand, qtyDisplay, itemTotalValue };
   });
-
-  const qtyDisplayRaw = qtyDisplay; // same as qtyDisplay
-
-  const itemTotalValue =
-    baseQty * toNumber(row.avgCostBase) + primaryQty * toNumber(row.avgCostPrimary);
-
-  return {
-    ...row,
-    qtyOnHand,
-    qtyOnHandRaw,
-    qtyDisplay,
-    qtyDisplayRaw,
-    itemTotalValue,
-  };
-});
 }
 
-
-//-------------------- [ getStockSnapshot(): FULL Snapshot (SalesRep optional) ] ----------------------
-async function getStockSnapshot({
-  branch = null,
-  salesRep = null,
-  from = null,
-  to = null,
-} = {}) {
+// Build full stock snapshot with movement summaries, on-hand, and trend totals.
+async function getStockSnapshot({ branch = null, salesRep = null, from = null, to = null } = {}) {
   const match = {};
   if (branch) match.branch = toObjectId(branch);
   if (salesRep) match.salesRep = toObjectId(salesRep);
@@ -462,84 +274,63 @@ async function getStockSnapshot({
     if (to) match.createdAt.$lte = to;
   }
 
-  // ---------- 1) Movement totals by transactionType ----------
+  const INCOMING_TYPES = ["purchase", "adj-goods-receive", "sales-return", "adj-sales-return"];
+  const OUTGOING_TYPES = ["sale", "adj-sale", "purchase-return", "adj-goods-return"];
+  const PURCHASE_TYPES = ["purchase", "adj-goods-receive"];
+  const SALE_TYPES = ["sale", "adj-sale"];
+  const RETURN_TYPES = ["sales-return", "purchase-return", "adj-sales-return", "adj-goods-return"];
+
+  // Sum grouped quantities only for matching transaction types.
+  const sumQtyByTypes = (field, types) => ({ $sum: { $cond: [{ $in: ["$_id.transactionType", types] }, `$${field}`, 0] } });
+
+  // Normalize split qty from total base-equivalent using factorToBase.
+  const normalizeSplitExpr = (primaryField, baseField, factorField) => ({
+    $let: {
+      vars: { totalBase: { $add: [{ $multiply: [`$${primaryField}`, `$${factorField}`] }, `$${baseField}`] } },
+      in: { primaryQty: { $floor: { $divide: ["$$totalBase", `$${factorField}`] } }, baseQty: { $mod: ["$$totalBase", `$${factorField}`] } },
+    },
+  });
+
+  // Aggregate period totals by transaction type.
   const mainAgg = await StockLedger.aggregate([
     { $match: match },
-    {
-      $group: {
-        _id: "$transactionType",
-        baseQty: { $sum: { $ifNull: ["$baseQty", 0] } },
-        primaryQty: { $sum: { $ifNull: ["$primaryQty", 0] } },
-        docCount: { $sum: 1 },
-      },
-    },
+    { $group: { _id: "$transactionType", baseQty: { $sum: { $ifNull: ["$baseQty", 0] } }, primaryQty: { $sum: { $ifNull: ["$primaryQty", 0] } }, docCount: { $sum: 1 } } },
   ]);
 
-  let totalReceivedQty = { baseQty: 0, primaryQty: 0 };
-  let totalIssuedQty = { baseQty: 0, primaryQty: 0 };
+  let totalReceivedQty = { baseQty: 0, primaryQty: 0 }, totalIssuedQty = { baseQty: 0, primaryQty: 0 };
 
-  const incomingTypes = [
-    "purchase",
-    "adj-goods-receive",
-    "sales-return",
-    "adj-sales-return",
-  ];
-  const outgoingTypes = [
-    "sale",
-    "adj-sale",
-    "purchase-return",
-    "adj-goods-return",
-  ];
-
+  // Split movement totals into incoming vs outgoing buckets.
   for (const row of mainAgg) {
-    const type = row._id;
-    const base = toNumber(row.baseQty || 0);
-    const primary = toNumber(row.primaryQty || 0);
-
-    if (incomingTypes.includes(type)) {
+    const type = row._id, base = toNumber(row.baseQty), primary = toNumber(row.primaryQty);
+    if (INCOMING_TYPES.includes(type)) {
       totalReceivedQty.baseQty += base;
       totalReceivedQty.primaryQty += primary;
-    } else if (outgoingTypes.includes(type)) {
+    } else if (OUTGOING_TYPES.includes(type)) {
       totalIssuedQty.baseQty += base;
       totalIssuedQty.primaryQty += primary;
-    } else {
-      console.warn("⚠️ Unmapped transactionType detected in snapshot:", type);
-    }
+    } else logger.warn("Unmapped transactionType detected in snapshot", { type });
   }
 
-  // ---------- 2) Period distinct items & branches ----------
-  const [periodItemIds, periodBranchIds] = await Promise.all([
-    StockLedger.distinct("item", match),
-    StockLedger.distinct("branch", match),
-  ]);
+  // Collect distinct period item and branch ids.
+  const [periodItemIds, periodBranchIds] = await Promise.all([StockLedger.distinct("item", match), StockLedger.distinct("branch", match)]);
 
-  const periodItemCount = periodItemIds.length;
-  const periodBranchCount = periodBranchIds.length;
-
+  // Aggregate item+branch movement breakdown with purchases, sales, returns, and net qty.
   const itemsMovementAgg = await StockLedger.aggregate([
     { $match: match },
-
-    {
-      $group: {
-        _id: { item: "$item", branch: "$branch", transactionType: "$transactionType" },
-        baseQty: { $sum: { $ifNull: ["$baseQty", 0] } },
-        primaryQty: { $sum: { $ifNull: ["$primaryQty", 0] } },
-      },
-    },
-
+    { $group: { _id: { item: "$item", branch: "$branch", transactionType: "$transactionType" }, baseQty: { $sum: { $ifNull: ["$baseQty", 0] } }, primaryQty: { $sum: { $ifNull: ["$primaryQty", 0] } } } },
     { $lookup: { from: "items", localField: "_id.item", foreignField: "_id", as: "itemInfo" } },
     { $unwind: "$itemInfo" },
     { $lookup: { from: "branches", localField: "_id.branch", foreignField: "_id", as: "branchInfo" } },
     { $unwind: "$branchInfo" },
-
     {
       $group: {
-        _id: "$_id.item",
-        branchId: { $first: "$_id.branch" },
+        _id: { item: "$_id.item", branch: "$_id.branch" },
         itemName: { $first: "$itemInfo.name" },
         itemCode: { $first: "$itemInfo.itemCode" },
         branchName: { $first: "$branchInfo.name" },
         factorToBase: { $first: "$itemInfo.factorToBase" },
+        primaryUom: { $first: "$itemInfo.primaryUom" },
+        baseUom: { $first: "$itemInfo.baseUom" },
         purchasesBaseQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["purchase", "adj-goods-receive"]] }, "$baseQty", 0] } },
         purchasesPrimaryQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["purchase", "adj-goods-receive"]] }, "$primaryQty", 0] } },
         salesBaseQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["sale", "adj-sale"]] }, "$baseQty", 0] } },
@@ -554,134 +345,61 @@ async function getStockSnapshot({
     },
     {
       $addFields: {
-        purchases: { baseQty: "$purchasesBaseQty", primaryQty: "$purchasesPrimaryQty"},
-        sales: { baseQty: "$salesBaseQty", primaryQty: "$salesPrimaryQty"},
-        returns: { baseQty: "$returnsBaseQty", primaryQty: "$returnsPrimaryQty"},
-
-        // TEMP normalized sales for netQty calculation
+        purchases: { baseQty: "$purchasesBaseQty", primaryQty: "$purchasesPrimaryQty" },
+        sales: { baseQty: "$salesBaseQty", primaryQty: "$salesPrimaryQty" },
+        returns: { baseQty: "$returnsBaseQty", primaryQty: "$returnsPrimaryQty" },
         _salesNormalized: {
           $let: {
-            vars: { totalBase: { $add: [ { $multiply: ["$salesPrimaryQty", "$factorToBase"] }, "$salesBaseQty" ]}},
-            in: { primaryQty: { $floor: { $divide: ["$$totalBase", "$factorToBase"] } }, baseQty: { $mod: ["$$totalBase", "$factorToBase"] } }
-          }
-        }
-      }
+            vars: { totalBase: { $add: [{ $multiply: ["$salesPrimaryQty", "$factorToBase"] }, "$salesBaseQty"] } },
+            in: { primaryQty: { $floor: { $divide: ["$$totalBase", "$factorToBase"] } }, baseQty: { $mod: ["$$totalBase", "$factorToBase"] } },
+          },
+        },
+      },
     },
-    {
-      $addFields: {
-        netQty: {
-          baseQty: { $subtract: ["$inBaseQty", "$_salesNormalized.baseQty"] },
-          primaryQty: { $subtract: ["$inPrimaryQty", "$_salesNormalized.primaryQty"] }
-        }
-      }
-    },
-    {
-      $project: {
-        _id: 0,
-        itemId: "$_id",
-        branchId: 1,
-        itemName: 1,
-        itemCode: 1,
-        branchName: 1,
-        factorToBase: 1,
-        purchases: 1,
-        sales: 1,
-        returns: 1,
-        netQty: 1
-      }
-    },
-    { $sort: { itemName: 1, branchName: 1 } }
+    { $addFields: { netQty: { baseQty: { $subtract: ["$inBaseQty", "$_salesNormalized.baseQty"] }, primaryQty: { $subtract: ["$inPrimaryQty", "$_salesNormalized.primaryQty"] } } } },
+    { $project: { _id: 0, itemId: "$_id.item", branchId: "$_id.branch", itemName: 1, itemCode: 1, branchName: 1, factorToBase: 1, primaryUom: 1, baseUom: 1, purchases: 1, sales: 1, returns: 1, netQty: 1 } },
+    { $sort: { itemName: 1, branchName: 1 } },
   ]);
 
-
+  // Aggregate branch-level movement totals across all items.
   const branchesMovementAgg = await StockLedger.aggregate([
     { $match: match },
-    {
-      $group: {
-        _id: {
-          branch: "$branch",
-          item: "$item",
-          transactionType: "$transactionType"
-        },
-        baseQty: { $sum: { $ifNull: ["$baseQty", 0] } },
-        primaryQty: { $sum: { $ifNull: ["$primaryQty", 0] } },
-        docCount: { $sum: 1 }
-      }
-    },
-    {
-      $lookup: {
-        from: "items",
-        localField: "_id.item",
-        foreignField: "_id",
-        as: "itemInfo"
-      }
-    },
+    { $group: { _id: { branch: "$branch", item: "$item", transactionType: "$transactionType" }, baseQty: { $sum: { $ifNull: ["$baseQty", 0] } }, primaryQty: { $sum: { $ifNull: ["$primaryQty", 0] } }, docCount: { $sum: 1 } } },
+    { $lookup: { from: "items", localField: "_id.item", foreignField: "_id", as: "itemInfo" } },
     { $unwind: "$itemInfo" },
     {
       $group: {
-        _id: {
-          branch: "$_id.branch",
-          item: "$_id.item"
-        },
+        _id: { branch: "$_id.branch", item: "$_id.item" },
         factorToBase: { $first: "$itemInfo.factorToBase" },
         docCount: { $sum: "$docCount" },
-        purchasesBaseQty: { $sum: { $cond: [ { $in: ["$_id.transactionType", ["purchase", "adj-goods-receive"]] }, "$baseQty", 0 ]}},
-        purchasesPrimaryQty: { $sum: { $cond: [ { $in: ["$_id.transactionType", ["purchase", "adj-goods-receive"]] }, "$primaryQty", 0 ]}},
-        salesBaseQty: { $sum: { $cond: [ { $in: ["$_id.transactionType", ["sale", "adj-sale"]] }, "$baseQty", 0 ]}},
-        salesPrimaryQty: { $sum: { $cond: [ { $in: ["$_id.transactionType", ["sale", "adj-sale"]] }, "$primaryQty", 0 ]}},
-        returnsBaseQty: {  $sum: { $cond: [ { $in: [ "$_id.transactionType", ["sales-return", "purchase-return", "adj-sales-return", "adj-goods-return"]]}, "$baseQty", 0 ]}},
-        returnsPrimaryQty: { $sum: { $cond: [ { $in: [ "$_id.transactionType", ["sales-return", "purchase-return", "adj-sales-return", "adj-goods-return"]]}, "$primaryQty", 0 ]}}
-      }
+        purchasesBaseQty: sumQtyByTypes("baseQty", PURCHASE_TYPES),
+        purchasesPrimaryQty: sumQtyByTypes("primaryQty", PURCHASE_TYPES),
+        salesBaseQty: sumQtyByTypes("baseQty", SALE_TYPES),
+        salesPrimaryQty: sumQtyByTypes("primaryQty", SALE_TYPES),
+        returnsBaseQty: sumQtyByTypes("baseQty", RETURN_TYPES),
+        returnsPrimaryQty: sumQtyByTypes("primaryQty", RETURN_TYPES),
+      },
     },
-    {
-      $addFields: {
-        normalizedSales: {
-          $let: {
-            vars: { totalBase: { $add: [ { $multiply: ["$salesPrimaryQty", "$factorToBase"] }, "$salesBaseQty" ]}},
-            in: { primaryQty: { $floor: { $divide: ["$$totalBase", "$factorToBase"] }}, baseQty: { $mod: ["$$totalBase", "$factorToBase"] }}
-          }
-        }
-      }
-    },
-    {
-      $addFields: { 
-        inBaseQty: { $add: ["$purchasesBaseQty", "$returnsBaseQty"] },
-        inPrimaryQty: { $add: ["$purchasesPrimaryQty", "$returnsPrimaryQty"] },
-        outBaseQty: "$normalizedSales.baseQty",
-        outPrimaryQty: "$normalizedSales.primaryQty"
-      }
-    },
+    { $addFields: { normalizedSales: normalizeSplitExpr("salesPrimaryQty", "salesBaseQty", "factorToBase"), inBaseQty: { $add: ["$purchasesBaseQty", "$returnsBaseQty"] }, inPrimaryQty: { $add: ["$purchasesPrimaryQty", "$returnsPrimaryQty"] } } },
+    { $addFields: { outBaseQty: "$normalizedSales.baseQty", outPrimaryQty: "$normalizedSales.primaryQty" } },
     {
       $group: {
         _id: "$_id.branch",
         docCount: { $sum: "$docCount" },
         purchasesBaseQty: { $sum: "$purchasesBaseQty" },
         purchasesPrimaryQty: { $sum: "$purchasesPrimaryQty" },
-        salesBaseQty: { $sum: "$salesBaseQty" },               
-        salesPrimaryQty: { $sum: "$salesPrimaryQty" }, 
+        salesBaseQty: { $sum: "$salesBaseQty" },
+        salesPrimaryQty: { $sum: "$salesPrimaryQty" },
         returnsBaseQty: { $sum: "$returnsBaseQty" },
         returnsPrimaryQty: { $sum: "$returnsPrimaryQty" },
         inBaseQty: { $sum: "$inBaseQty" },
         inPrimaryQty: { $sum: "$inPrimaryQty" },
         outBaseQty: { $sum: "$outBaseQty" },
-        outPrimaryQty: { $sum: "$outPrimaryQty" }
-      }
+        outPrimaryQty: { $sum: "$outPrimaryQty" },
+      },
     },
-    {
-      $lookup: {
-        from: "branches",
-        localField: "_id",
-        foreignField: "_id",
-        as: "branchInfo"
-      }
-    },
+    { $lookup: { from: "branches", localField: "_id", foreignField: "_id", as: "branchInfo" } },
     { $unwind: "$branchInfo" },
-    {
-      $addFields: {
-        netBaseQty: { $subtract: ["$inBaseQty", "$outBaseQty"] },
-        netPrimaryQty: { $subtract: ["$inPrimaryQty", "$outPrimaryQty"] }
-      }
-    },
     {
       $project: {
         _id: 0,
@@ -691,292 +409,102 @@ async function getStockSnapshot({
         purchases: { baseQty: "$purchasesBaseQty", primaryQty: "$purchasesPrimaryQty" },
         sales: { baseQty: "$salesBaseQty", primaryQty: "$salesPrimaryQty" },
         returns: { baseQty: "$returnsBaseQty", primaryQty: "$returnsPrimaryQty" },
-        netQty: { baseQty: "$netBaseQty", primaryQty: "$netPrimaryQty" }
-      }
+        netQty: { baseQty: { $subtract: ["$inBaseQty", "$outBaseQty"] }, primaryQty: { $subtract: ["$inPrimaryQty", "$outPrimaryQty"] } },
+      },
     },
-
-    { $sort: { branchName: 1 } }
+    { $sort: { branchName: 1 } },
   ]);
 
+  // Compute on-hand canonical balances from latest current stock snapshot.
+  const onHandRows = await getCurrentStock(branch ? toObjectId(branch) : null, salesRep ? toObjectId(salesRep) : null);
 
-  // ---------- 5) On-hand (current) from getCurrentStock (using RAW mix where possible) ----------
-  const onHandRows = await getCurrentStock(
-    branch ? toObjectId(branch) : null,
-    salesRep ? toObjectId(salesRep) : null
-  );
+  const onHandItemBranchMap = new Map(), branchOnHandMap = new Map();
+  let onHandQty = { baseQty: 0, primaryQty: 0 }, onHandStockValue = 0;
+  const onHandItemIds = new Set(), onHandBranchIds = new Set();
 
-  // Build maps for quick lookup
-  const onHandItemBranchMap = new Map(); // key: itemId::branchId -> { baseQty, primaryQty }  (RAW mix preferred)
-  const branchOnHandMap = new Map(); // key: branchId -> { baseQty, primaryQty }
-
-  let onHandQty = { baseQty: 0, primaryQty: 0 };
-  let onHandStockValue = 0;
-  const onHandItemIds = new Set();
-  const onHandBranchIds = new Set();
-
+  // Roll up on-hand qty/value and cache canonical item/branch balances.
   for (const row of onHandRows) {
-    const itemIdStr = String(row.itemId);
-    const branchIdStr = String(row.branchId);
-
-    // Prefer RAW "as-moved" mix (qtyOnHandRaw) so open boxes never magically reseal.
-    const baseQty = toNumber(
-      row.qtyOnHandRaw?.baseQty ??
-        row.qtyOnHand?.baseQty ??
-        0
-    );
-    const primaryQty = toNumber(
-      row.qtyOnHandRaw?.primaryQty ??
-        row.qtyOnHand?.primaryQty ??
-        0
-    );
-
+    const itemIdStr = String(row.itemId), branchIdStr = String(row.branchId), baseQty = toNumber(row.qtyOnHand?.baseQty), primaryQty = toNumber(row.qtyOnHand?.primaryQty);
     onHandQty.baseQty += baseQty;
     onHandQty.primaryQty += primaryQty;
-
     onHandStockValue += toNumber(row.itemTotalValue);
     onHandItemIds.add(itemIdStr);
     onHandBranchIds.add(branchIdStr);
-
-    const key = `${itemIdStr}::${branchIdStr}`;
-    onHandItemBranchMap.set(key, { baseQty, primaryQty });
-
-    const existing =
-      branchOnHandMap.get(branchIdStr) || { baseQty: 0, primaryQty: 0 };
-    existing.baseQty += baseQty;
-    existing.primaryQty += primaryQty;
-    branchOnHandMap.set(branchIdStr, existing);
+    onHandItemBranchMap.set(`${itemIdStr}::${branchIdStr}`, { baseQty, primaryQty });
+    const branchAccum = branchOnHandMap.get(branchIdStr) || { baseQty: 0, primaryQty: 0 };
+    branchAccum.baseQty += baseQty;
+    branchAccum.primaryQty += primaryQty;
+    branchOnHandMap.set(branchIdStr, branchAccum);
   }
 
-  const onHandItemCount = onHandItemIds.size;
-  const onHandBranchCount = onHandBranchIds.size;
-
-  // Canonical net movement = sum of on-hand (in raw mix units)
-  const netMovementQty = {
-    baseQty: onHandQty.baseQty,
-    primaryQty: onHandQty.primaryQty,
-  };
-
-  // ---------- 6) transactionTypeTotals ----------
+  // Aggregate raw totals by transaction type for reporting.
   const transactionTypeTotalsAgg = await StockLedger.aggregate([
     { $match: match },
-    {
-      $group: {
-        _id: "$transactionType",
-        baseQty: { $sum: { $ifNull: ["$baseQty", 0] } },
-        primaryQty: { $sum: { $ifNull: ["$primaryQty", 0] } },
-      },
-    },
-    {
-      $project: {
-        _id: 0,
-        transactionType: "$_id",
-        baseQty: 1,
-        primaryQty: 1,
-      },
-    },
+    { $group: { _id: "$transactionType", baseQty: { $sum: { $ifNull: ["$baseQty", 0] } }, primaryQty: { $sum: { $ifNull: ["$primaryQty", 0] } } } },
+    { $project: { _id: 0, transactionType: "$_id", baseQty: 1, primaryQty: 1 } },
   ]);
 
-  const transactionTypeTotals = {};
-  for (const row of transactionTypeTotalsAgg) {
-    transactionTypeTotals[row.transactionType] = {
-      baseQty: toNumber(row.baseQty),
-      primaryQty: toNumber(row.primaryQty),
-    };
-  }
+  const transactionTypeTotals = Object.fromEntries(transactionTypeTotalsAgg.map((r) => [r.transactionType, { baseQty: toNumber(r.baseQty), primaryQty: toNumber(r.primaryQty) }]));
 
- // ---------- 7) itemMovementPivot (movement pivot by item+branch) ----------
-const itemMovementPivotAgg = await StockLedger.aggregate([
-  { $match: match },
-
-  // Step 1: Group by item+branch+transactionType to sum base and primary quantities
-  {
-    $group: {
-      _id: { item: "$item", branch: "$branch", transactionType: "$transactionType" },
-      baseQty: { $sum: { $ifNull: ["$baseQty", 0] } },
-      primaryQty: { $sum: { $ifNull: ["$primaryQty", 0] } },
-    },
-  },
-
-  // Step 2: Join item and branch info
-  { $lookup: { from: "items", localField: "_id.item", foreignField: "_id", as: "itemInfo" } },
-  { $unwind: "$itemInfo" },
-  { $lookup: { from: "branches", localField: "_id.branch", foreignField: "_id", as: "branchInfo" } },
-  { $unwind: "$branchInfo" },
-
-  // Step 3: Aggregate per item+branch using simplified sums
-  {
-    $group: {
-      _id: { item: "$_id.item", branch: "$_id.branch" },
-      itemName: { $first: "$itemInfo.name" },
-      itemCode: { $first: "$itemInfo.itemCode" },
-      branchName: { $first: "$branchInfo.name" },
-      factorToBase: { $first: "$itemInfo.factorToBase" },
-
-      purchasesBaseQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["purchase", "adj-goods-receive"]] }, "$baseQty", 0] } },
-      purchasesPrimaryQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["purchase", "adj-goods-receive"]] }, "$primaryQty", 0] } },
-
-      salesBaseQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["sale", "adj-sale"]] }, "$baseQty", 0] } },
-      salesPrimaryQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["sale", "adj-sale"]] }, "$primaryQty", 0] } },
-
-      returnsBaseQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["sales-return", "purchase-return", "adj-sales-return", "adj-goods-return"]] }, "$baseQty", 0] } },
-      returnsPrimaryQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["sales-return", "purchase-return", "adj-sales-return", "adj-goods-return"]] }, "$primaryQty", 0] } },
-
-      inBaseQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["purchase", "adj-goods-receive", "sales-return", "adj-sales-return"]] }, "$baseQty", 0] } },
-      inPrimaryQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["purchase", "adj-goods-receive", "sales-return", "adj-sales-return"]] }, "$primaryQty", 0] } },
-
-      outBaseQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["sale", "adj-sale", "purchase-return", "adj-goods-return"]] }, "$baseQty", 0] } },
-      outPrimaryQty: { $sum: { $cond: [{ $in: ["$_id.transactionType", ["sale", "adj-sale", "purchase-return", "adj-goods-return"]] }, "$primaryQty", 0] } },
-    },
-  },
-
-  // Step 4: Prepare nested structures and normalize sales for netQty
-  {
-    $addFields: {
-      purchases: { baseQty: "$purchasesBaseQty", primaryQty: "$purchasesPrimaryQty" },
-      sales: { baseQty: "$salesBaseQty", primaryQty: "$salesPrimaryQty" },
-      returns: { baseQty: "$returnsBaseQty", primaryQty: "$returnsPrimaryQty" },
-
-      _salesNormalized: {
-        $let: {
-          vars: { totalBase: { $add: [ { $multiply: ["$salesPrimaryQty", "$factorToBase"] }, "$salesBaseQty" ] } },
-          in: { 
-            primaryQty: { $floor: { $divide: ["$$totalBase", "$factorToBase"] } }, 
-            baseQty: { $mod: ["$$totalBase", "$factorToBase"] } 
-          }
-        }
-      }
-    }
-  },
-
-  // Step 5: Calculate netQty
-  {
-    $addFields: {
-      netQty: {
-        baseQty: { $subtract: ["$inBaseQty", "$_salesNormalized.baseQty"] },
-        primaryQty: { $subtract: ["$inPrimaryQty", "$_salesNormalized.primaryQty"] }
-      }
-    }
-  },
-
-  // Step 6: Final projection
-  {
-    $project: {
-      _id: 0,
-      itemId: "$_id.item",
-      branchId: "$_id.branch",
-      itemName: 1,
-      itemCode: 1,
-      branchName: 1,
-      factorToBase: 1,
-      purchases: 1,
-      sales: 1,
-      returns: 1,
-      netQty: 1,
-    }
-  },
-
-  // Step 7: Sort by item and branch
-  { $sort: { itemName: 1, branchName: 1 } },
-]);
-
-  // ---------- 8) Override all netQty with on-hand RAW mix ----------
+  // Replace net qty with canonical on-hand values and add display fields.
   const itemsMovement = itemsMovementAgg.map((row) => {
-    const key = `${String(row.itemId)}::${String(row.branchId)}`;
-    const canonical = onHandItemBranchMap.get(key);
-    if (canonical) {
-      return {
-        ...row,
-        // netQty: {
-        //   baseQty: canonical.baseQty,
-        //   primaryQty: canonical.primaryQty,
-        // },
-      };
-    }
-    return row;
+    const key = `${String(row.itemId)}::${String(row.branchId)}`, canonical = onHandItemBranchMap.get(key);
+    const finalRow = canonical ? { ...row, netQty: { baseQty: canonical.baseQty, primaryQty: canonical.primaryQty } } : row;
+    const primaryLabel = finalRow.primaryUom || "PRIMARY", baseLabel = finalRow.baseUom || "BASE";
+
+    return {
+      ...finalRow,
+      purchasesDisplay: formatQtySplit({ primaryQty: toNumber(finalRow.purchases?.primaryQty), baseQty: toNumber(finalRow.purchases?.baseQty), primaryLabel, baseLabel }),
+      salesDisplay: formatQtySplit({ primaryQty: toNumber(finalRow.sales?.primaryQty), baseQty: toNumber(finalRow.sales?.baseQty), primaryLabel, baseLabel }),
+      returnsDisplay: formatQtySplit({ primaryQty: toNumber(finalRow.returns?.primaryQty), baseQty: toNumber(finalRow.returns?.baseQty), primaryLabel, baseLabel }),
+      netQtyDisplay: formatQtySplit({ primaryQty: toNumber(finalRow.netQty?.primaryQty), baseQty: toNumber(finalRow.netQty?.baseQty), primaryLabel, baseLabel }),
+    };
   });
 
+  // Replace branch net qty with canonical on-hand branch balances.
   const branchesMovement = branchesMovementAgg.map((row) => {
-    const branchIdStr = String(row.branchId);
-    const canonical = branchOnHandMap.get(branchIdStr);
-    if (canonical) {
-      return {
-        ...row,
-        // netQty: {
-        //   baseQty: canonical.baseQty,
-        //   primaryQty: canonical.primaryQty,
-        // },
-      };
-    }
-    return row;
+    const canonical = branchOnHandMap.get(String(row.branchId));
+    return canonical ? { ...row, netQty: { ...canonical } } : row;
   });
 
-  const itemMovementPivot = itemMovementPivotAgg.map((row) => {
-    const key = `${String(row.itemId)}::${String(row.branchId)}`;
-    const canonical = onHandItemBranchMap.get(key);
-    if (canonical) {
-      return {
-        ...row,
-        // netQty: {
-        //   baseQty: canonical.baseQty,
-        //   primaryQty: canonical.primaryQty,
-        // },
-      };
-    }
-    return row;
-  });
-
+  // Return consolidated stock snapshot payload.
   return {
     generatedAt: new Date(),
-    netMovementQty, // ✅ sum of RAW on-hand across all items
-    totalReceivedQty, // movement summary
-    totalIssuedQty, // movement summary
-    periodItemCount,
-    periodBranchCount,
-    onHandQty, // ✅ RAW mix sum
-    onHandStockValue,
-    onHandItemCount,
-    onHandBranchCount,
+    netMovementQty: {
+      ...onHandQty,
+      totalItemCount: onHandItemIds.size,
+    },
+    totalReceivedQty: {
+      ...totalReceivedQty,
+      totalItemCount: periodItemIds.length,
+    },
+    totalIssuedQty: {
+      ...totalIssuedQty,
+      totalItemCount: periodItemIds.length,
+    },
+    periodItemCount: periodItemIds.length,
+    periodBranchCount: periodBranchIds.length,
+    onHand: {
+      qty: onHandQty, 
+      stockValue: onHandStockValue, 
+      itemCount: onHandItemIds.size,
+      branchCount: onHandBranchIds.size,
+    },
     itemsMovement,
     branchesMovement,
     transactionTypeTotals,
-    itemMovementPivot,
     orderingFields: ["itemName", "branchName"],
   };
 }
 
-//-------------------- [ computeStockStatus(): Determine Stock Level & Status ] ----------------------
+// Compute stock status using on-hand base-equivalent qty and reorder level.
 async function computeStockStatus(itemObj, branchId = null, salesRepId = null) {
-  if (!itemObj?._id)
-    throw new Error("computeStockStatus: item object with _id is required");
-
-  const qtyOnHandBaseEq = await getItemBalance(
-    itemObj._id,
-    branchId,
-    salesRepId
-  ); // number
-  const reorderLevel = toNumber(itemObj.reorderLevel);
-
+  if (!itemObj?._id) throw new Error("computeStockStatus: item object with _id is required");
+  const qtyOnHandBaseEq = await getItemBalance(itemObj._id, branchId, salesRepId), reorderLevel = toNumber(itemObj.reorderLevel);
   let stockStatus = "in_stock";
   if (qtyOnHandBaseEq <= 0) stockStatus = "out_of_stock";
   else if (qtyOnHandBaseEq <= reorderLevel) stockStatus = "low_stock";
-
   return { qtyOnHand: qtyOnHandBaseEq, stockStatus };
 }
 
-module.exports = {
-  postLedger,
-  postStockReturnLedger,
-  getItemBalance,
-  getItemHistory,
-  getCurrentStock,
-  getStockSnapshot,
-  computeStockStatus,
-};
-
-
-
-
-
-
-
-
+module.exports = { postLedger, postStockReturnLedger, getItemBalance, getItemHistory, getCurrentStock, getStockSnapshot, computeStockStatus };

@@ -1,4 +1,4 @@
-// controllers/inventory/salesLedger.controller.js
+// controllers/ledger/salesLedger.controller.js
 const { asyncHandler } = require("../../utils/asyncHandler");
 const { ApiError } = require("../../middlewares/error");
 const Branch = require("../../models/inventorySettings/branch.model");
@@ -10,6 +10,7 @@ const {
   getSalesSnapshot,
 } = require("../../services/ledger/salesLedger.service");
 
+// Normalizes query date strings into inclusive day-bound Date objects.
 const normalizeDateRange = (from, to) => {
   let fromDate = null;
   let toDate = null;
@@ -27,14 +28,15 @@ const normalizeDateRange = (from, to) => {
   return { fromDate, toDate };
 };
 
+// Resolves effective sales rep scope (forced self-scope for SalesRep actors, optional query scope for staff).
 function resolveSalesRepScope(req) {
-  // SalesRep actor => force own
+  // SalesRep actor is always restricted to their own records.
   if (req.authActor?.actorType === "SalesRep") return String(req.authActor.id);
-  // staff => allow optional query.salesRep
+  // Staff users may optionally filter by salesRep.
   return req.query.salesRep || null;
 }
 
-// LIST SALES LEDGER
+// GET /ledger/sales - Returns sales ledger rows filtered by branch, customer, salesRep scope, and date range.
 exports.list = asyncHandler(async (req, res) => {
   const { branch, customer, from, to } = req.query;
 
@@ -50,7 +52,7 @@ exports.list = asyncHandler(async (req, res) => {
   const rows = await listSalesLedger({
     branch: branchObj,
     customer,
-    salesRep: resolveSalesRepScope(req), // ✅ NEW
+    salesRep: resolveSalesRepScope(req),
     from: fromDate,
     to: toDate,
   });
@@ -58,7 +60,7 @@ exports.list = asyncHandler(async (req, res) => {
   res.json(rows);
 });
 
-// ITEM SUMMARY
+// GET /ledger/sales/summary/items - Returns item-wise sales summary for selected filters.
 exports.summaryByItem = asyncHandler(async (req, res) => {
   const { branch, from, to } = req.query;
 
@@ -73,7 +75,7 @@ exports.summaryByItem = asyncHandler(async (req, res) => {
 
   const summary = await getSalesSummaryByItem({
     branch: branchObj,
-    salesRep: resolveSalesRepScope(req), // ✅ NEW
+    salesRep: resolveSalesRepScope(req),
     from: fromDate,
     to: toDate,
   });
@@ -81,7 +83,7 @@ exports.summaryByItem = asyncHandler(async (req, res) => {
   res.json(summary);
 });
 
-// CUSTOMER SUMMARY
+// GET /ledger/sales/summary/customers - Returns customer-wise sales summary for selected filters.
 exports.summaryByCustomer = asyncHandler(async (req, res) => {
   const { branch, from, to } = req.query;
 
@@ -96,7 +98,7 @@ exports.summaryByCustomer = asyncHandler(async (req, res) => {
 
   const summary = await getSalesSummaryByCustomer({
     branch: branchObj,
-    salesRep: resolveSalesRepScope(req), // ✅ NEW
+    salesRep: resolveSalesRepScope(req),
     from: fromDate,
     to: toDate,
   });
@@ -104,7 +106,7 @@ exports.summaryByCustomer = asyncHandler(async (req, res) => {
   res.json(summary);
 });
 
-// FULL SNAPSHOT
+// GET /ledger/sales/snapshot - Returns aggregated sales snapshot (summary + breakdowns) for selected filters.
 exports.snapshot = asyncHandler(async (req, res) => {
   const { branch, customer, from, to } = req.query;
   const { fromDate, toDate } = normalizeDateRange(from, to);
@@ -119,7 +121,7 @@ exports.snapshot = asyncHandler(async (req, res) => {
   const snapshot = await getSalesSnapshot({
     branch: branchObj,
     customer,
-    salesRep: resolveSalesRepScope(req), // ✅ NEW
+    salesRep: resolveSalesRepScope(req),
     from: fromDate,
     to: toDate,
   });
