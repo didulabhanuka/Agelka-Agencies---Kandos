@@ -66,55 +66,77 @@ jobs:
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            az containerapp create \
+            # Check if container app already exists
+            EXISTS=$(az containerapp show \
               --name agelka-server \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment ${{ env.CONTAINER_ENV }} \
-              --image ${{ env.ACR_REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
-              --registry-server ${{ env.ACR_REGISTRY }} \
-              --registry-username ${{ secrets.ACR_USERNAME }} \
-              --registry-password ${{ secrets.ACR_PASSWORD }} \
-              --target-port 5000 \
-              --ingress external \
-              --min-replicas 1 \
-              --max-replicas 3 \
-              --env-vars \
-                NODE_ENV=production \
-                PORT=5000 \
-                MONGO_URL=secretref:mongo-url \
-                JWT_SECRET=secretref:jwt-secret \
-                JWT_EXPIRES="${{ secrets.JWT_EXPIRES }}" \
-                CLIENT_ORIGIN="${{ secrets.CLIENT_ORIGIN }}" \
-                ADMIN_EMAIL="${{ secrets.ADMIN_EMAIL }}" \
-                ADMIN_PASSWORD=secretref:admin-password \
-                SMTP_PORT="${{ secrets.SMTP_PORT }}" \
-                SMTP_SECURE="${{ secrets.SMTP_SECURE }}" \
-                INQUIRY_TO_EMAIL="${{ secrets.INQUIRY_TO_EMAIL }}" \
-            || az containerapp update \
-              --name agelka-server \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --image ${{ env.ACR_REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+              --query "name" -o tsv 2>/dev/null || echo "")
+
+            if [ -z "$EXISTS" ]; then
+              echo "Creating agelka-server container app..."
+              az containerapp create \
+                --name agelka-server \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --environment ${{ env.CONTAINER_ENV }} \
+                --image ${{ env.ACR_REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+                --registry-server ${{ env.ACR_REGISTRY }} \
+                --registry-username ${{ secrets.ACR_USERNAME }} \
+                --registry-password "${{ secrets.ACR_PASSWORD }}" \
+                --target-port 5000 \
+                --ingress external \
+                --min-replicas 1 \
+                --max-replicas 3 \
+                --env-vars \
+                  NODE_ENV=production \
+                  PORT=5000 \
+                  MONGO_URL="${{ secrets.MONGO_URL }}" \
+                  JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+                  JWT_EXPIRES="${{ secrets.JWT_EXPIRES }}" \
+                  CLIENT_ORIGIN="${{ secrets.CLIENT_ORIGIN }}" \
+                  ADMIN_EMAIL="${{ secrets.ADMIN_EMAIL }}" \
+                  ADMIN_PASSWORD="${{ secrets.ADMIN_PASSWORD }}" \
+                  SMTP_PORT="${{ secrets.SMTP_PORT }}" \
+                  SMTP_SECURE="${{ secrets.SMTP_SECURE }}" \
+                  INQUIRY_TO_EMAIL="${{ secrets.INQUIRY_TO_EMAIL }}"
+            else
+              echo "Updating agelka-server container app..."
+              az containerapp update \
+                --name agelka-server \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --image ${{ env.ACR_REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+            fi
 
       - name: 🎨 Deploy Frontend to Container Apps
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            az containerapp create \
+            # Check if container app already exists
+            EXISTS=$(az containerapp show \
               --name agelka-client \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --environment ${{ env.CONTAINER_ENV }} \
-              --image ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }} \
-              --registry-server ${{ env.ACR_REGISTRY }} \
-              --registry-username ${{ secrets.ACR_USERNAME }} \
-              --registry-password ${{ secrets.ACR_PASSWORD }} \
-              --target-port 80 \
-              --ingress external \
-              --min-replicas 1 \
-              --max-replicas 2 \
-            || az containerapp update \
-              --name agelka-client \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --image ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+              --query "name" -o tsv 2>/dev/null || echo "")
+
+            if [ -z "$EXISTS" ]; then
+              echo "Creating agelka-client container app..."
+              az containerapp create \
+                --name agelka-client \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --environment ${{ env.CONTAINER_ENV }} \
+                --image ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }} \
+                --registry-server ${{ env.ACR_REGISTRY }} \
+                --registry-username ${{ secrets.ACR_USERNAME }} \
+                --registry-password "${{ secrets.ACR_PASSWORD }}" \
+                --target-port 80 \
+                --ingress external \
+                --min-replicas 1 \
+                --max-replicas 2
+            else
+              echo "Updating agelka-client container app..."
+              az containerapp update \
+                --name agelka-client \
+                --resource-group ${{ env.RESOURCE_GROUP }} \
+                --image ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+            fi
 
       - name: ✅ Get App URLs
         uses: azure/CLI@v1
@@ -123,11 +145,11 @@ jobs:
             BACKEND_URL=$(az containerapp show \
               --name agelka-server \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --query "properties.configuration.ingress.fqdn" -o tsv)
+              --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || echo "not ready yet")
             FRONTEND_URL=$(az containerapp show \
               --name agelka-client \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --query "properties.configuration.ingress.fqdn" -o tsv)
+              --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || echo "not ready yet")
             echo "🎉 Deployment complete!"
             echo "🖥️  Frontend: https://$FRONTEND_URL"
             echo "⚙️  Backend:  https://$BACKEND_URL"
