@@ -3,7 +3,7 @@ name: 🚀 Deploy Agelka ERP to Azure
 on:
   push:
     branches: [main]
-  workflow_dispatch: # allows manual trigger from GitHub UI
+  workflow_dispatch:
 
 env:
   ACR_REGISTRY: agelkaacr.azurecr.io
@@ -36,31 +36,25 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./server
-          dockerfile: ./server/Dockerfile
           push: true
           tags: |
             ${{ env.ACR_REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest
             ${{ env.ACR_REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.ACR_REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest
-          cache-to: type=inline
 
       - name: 🎨 Build & Push Frontend Image
         uses: docker/build-push-action@v5
         with:
           context: ./client
-          dockerfile: ./client/Dockerfile
           push: true
           tags: |
             ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest
             ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest
-          cache-to: type=inline
 
   # ── Job 2: Deploy to Azure Container Apps ───────────────────────
   deploy:
     name: ☁️ Deploy to Azure
     runs-on: ubuntu-latest
-    needs: build # only runs after build succeeds
+    needs: build
 
     steps:
       - name: 🔐 Login to Azure
@@ -69,48 +63,71 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: 🚀 Deploy Backend to Container Apps
-        uses: azure/container-apps-deploy-action@v1
+        uses: azure/CLI@v1
         with:
-          resourceGroup: ${{ env.RESOURCE_GROUP }}
-          containerAppEnvironment: ${{ env.CONTAINER_ENV }}
-          containerAppName: agelka-server
-          imageToDeploy: ${{ env.ACR_REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}
-          registryUrl: ${{ env.ACR_REGISTRY }}
-          registryUsername: ${{ secrets.ACR_USERNAME }}
-          registryPassword: ${{ secrets.ACR_PASSWORD }}
-          targetPort: 5000
-          ingress: external
-          environmentVariables: >
-            NODE_ENV=production
-            PORT=5000
-            MONGO_URL=secretref:mongo-url
-            JWT_SECRET=secretref:jwt-secret
-            JWT_EXPIRES=${{ secrets.JWT_EXPIRES }}
-            CLIENT_ORIGIN=${{ secrets.CLIENT_ORIGIN }}
-            ADMIN_EMAIL=${{ secrets.ADMIN_EMAIL }}
-            ADMIN_PASSWORD=secretref:admin-password
-            SMTP_HOST=${{ secrets.SMTP_HOST }}
-            SMTP_PORT=${{ secrets.SMTP_PORT }}
-            SMTP_USER=${{ secrets.SMTP_USER }}
-            SMTP_PASS=secretref:smtp-pass
-            SMTP_SECURE=${{ secrets.SMTP_SECURE }}
-            INQUIRY_TO_EMAIL=${{ secrets.INQUIRY_TO_EMAIL }}
+          inlineScript: |
+            az containerapp create \
+              --name agelka-server \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment ${{ env.CONTAINER_ENV }} \
+              --image ${{ env.ACR_REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }} \
+              --registry-server ${{ env.ACR_REGISTRY }} \
+              --registry-username ${{ secrets.ACR_USERNAME }} \
+              --registry-password ${{ secrets.ACR_PASSWORD }} \
+              --target-port 5000 \
+              --ingress external \
+              --min-replicas 1 \
+              --max-replicas 3 \
+              --env-vars \
+                NODE_ENV=production \
+                PORT=5000 \
+                MONGO_URL=secretref:mongo-url \
+                JWT_SECRET=secretref:jwt-secret \
+                JWT_EXPIRES="${{ secrets.JWT_EXPIRES }}" \
+                CLIENT_ORIGIN="${{ secrets.CLIENT_ORIGIN }}" \
+                ADMIN_EMAIL="${{ secrets.ADMIN_EMAIL }}" \
+                ADMIN_PASSWORD=secretref:admin-password \
+                SMTP_PORT="${{ secrets.SMTP_PORT }}" \
+                SMTP_SECURE="${{ secrets.SMTP_SECURE }}" \
+                INQUIRY_TO_EMAIL="${{ secrets.INQUIRY_TO_EMAIL }}" \
+            || az containerapp update \
+              --name agelka-server \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --image ${{ env.ACR_REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}
 
       - name: 🎨 Deploy Frontend to Container Apps
-        uses: azure/container-apps-deploy-action@v1
+        uses: azure/CLI@v1
         with:
-          resourceGroup: ${{ env.RESOURCE_GROUP }}
-          containerAppEnvironment: ${{ env.CONTAINER_ENV }}
-          containerAppName: agelka-client
-          imageToDeploy: ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
-          registryUrl: ${{ env.ACR_REGISTRY }}
-          registryUsername: ${{ secrets.ACR_USERNAME }}
-          registryPassword: ${{ secrets.ACR_PASSWORD }}
-          targetPort: 80
-          ingress: external
+          inlineScript: |
+            az containerapp create \
+              --name agelka-client \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --environment ${{ env.CONTAINER_ENV }} \
+              --image ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }} \
+              --registry-server ${{ env.ACR_REGISTRY }} \
+              --registry-username ${{ secrets.ACR_USERNAME }} \
+              --registry-password ${{ secrets.ACR_PASSWORD }} \
+              --target-port 80 \
+              --ingress external \
+              --min-replicas 1 \
+              --max-replicas 2 \
+            || az containerapp update \
+              --name agelka-client \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --image ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
 
-      - name: ✅ Deployment Complete
-        run: |
-          echo "🎉 Agelka ERP deployed successfully!"
-          echo "🕐 Deployed at: $(date)"
-          echo "📦 Image SHA: ${{ github.sha }}"
+      - name: ✅ Get App URLs
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            BACKEND_URL=$(az containerapp show \
+              --name agelka-server \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --query "properties.configuration.ingress.fqdn" -o tsv)
+            FRONTEND_URL=$(az containerapp show \
+              --name agelka-client \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --query "properties.configuration.ingress.fqdn" -o tsv)
+            echo "🎉 Deployment complete!"
+            echo "🖥️  Frontend: https://$FRONTEND_URL"
+            echo "⚙️  Backend:  https://$BACKEND_URL"
