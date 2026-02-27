@@ -89,15 +89,21 @@ jobs:
                 --env-vars \
                   NODE_ENV=production \
                   PORT=5000 \
-                  MONGO_URL="${{ secrets.MONGO_URL }}" \
-                  JWT_SECRET="${{ secrets.JWT_SECRET }}" \
-                  JWT_EXPIRES="${{ secrets.JWT_EXPIRES }}" \
+                  MONGODB_URI="${{ secrets.MONGODB_URI }}" \
+                  JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}" \
+                  JWT_REFRESH_SECRET_KEY="${{ secrets.JWT_REFRESH_SECRET_KEY }}" \
+                  JWT_EXPIRATION="${{ secrets.JWT_EXPIRATION }}" \
+                  JWT_REFRESH_EXPIRATION="${{ secrets.JWT_REFRESH_EXPIRATION }}" \
+                  REFRESH_COOKIE_NAME="${{ secrets.REFRESH_COOKIE_NAME }}" \
                   CLIENT_ORIGIN="${{ secrets.CLIENT_ORIGIN }}" \
                   ADMIN_EMAIL="${{ secrets.ADMIN_EMAIL }}" \
                   ADMIN_PASSWORD="${{ secrets.ADMIN_PASSWORD }}" \
+                  SMTP_HOST="${{ secrets.SMTP_HOST }}" \
                   SMTP_PORT="${{ secrets.SMTP_PORT }}" \
+                  SMTP_USER="${{ secrets.SMTP_USER }}" \
+                  SMTP_PASS="${{ secrets.SMTP_PASS }}" \
                   SMTP_SECURE="${{ secrets.SMTP_SECURE }}" \
-                  INQUIRY_TO_EMAIL="${{ secrets.INQUIRY_TO_EMAIL }}"
+                  INQUIRY_TO_EMAIL="${{ secrets.INQUIRY_TO_EMAIL }}"      
             else
               echo "Updating agelka-server container app..."
               az containerapp update \
