@@ -49,6 +49,8 @@ jobs:
           tags: |
             ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest
             ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
+          build-args: |
+            VITE_API_BASE_URL=https://agelka-server.victoriousdesert-2974c53b.eastus.azurecontainerapps.io
 
   # ── Job 2: Deploy to Azure Container Apps ───────────────────────
   deploy:
@@ -66,7 +68,6 @@ jobs:
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            # Check if container app already exists
             EXISTS=$(az containerapp show \
               --name agelka-server \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -103,9 +104,9 @@ jobs:
                   SMTP_USER="${{ secrets.SMTP_USER }}" \
                   SMTP_PASS="${{ secrets.SMTP_PASS }}" \
                   SMTP_SECURE="${{ secrets.SMTP_SECURE }}" \
-                  INQUIRY_TO_EMAIL="${{ secrets.INQUIRY_TO_EMAIL }}"      
+                  INQUIRY_TO_EMAIL="${{ secrets.INQUIRY_TO_EMAIL }}"
             else
-              echo "Updating agelka-server container app..."
+              echo "Updating agelka-server image..."
               az containerapp update \
                 --name agelka-server \
                 --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -116,7 +117,6 @@ jobs:
         uses: azure/CLI@v1
         with:
           inlineScript: |
-            # Check if container app already exists
             EXISTS=$(az containerapp show \
               --name agelka-client \
               --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -137,7 +137,7 @@ jobs:
                 --min-replicas 1 \
                 --max-replicas 2
             else
-              echo "Updating agelka-client container app..."
+              echo "Updating agelka-client image..."
               az containerapp update \
                 --name agelka-client \
                 --resource-group ${{ env.RESOURCE_GROUP }} \
@@ -151,11 +151,11 @@ jobs:
             BACKEND_URL=$(az containerapp show \
               --name agelka-server \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || echo "not ready yet")
+              --query "properties.configuration.ingress.fqdn" -o tsv)
             FRONTEND_URL=$(az containerapp show \
               --name agelka-client \
               --resource-group ${{ env.RESOURCE_GROUP }} \
-              --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || echo "not ready yet")
+              --query "properties.configuration.ingress.fqdn" -o tsv)
             echo "🎉 Deployment complete!"
             echo "🖥️  Frontend: https://$FRONTEND_URL"
             echo "⚙️  Backend:  https://$BACKEND_URL"

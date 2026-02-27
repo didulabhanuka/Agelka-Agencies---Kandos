@@ -3,6 +3,10 @@ FROM node:18-alpine AS build
 
 WORKDIR /app
 
+# Accept API URL as build argument
+ARG VITE_API_BASE_URL
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+
 # Copy package files
 COPY package*.json ./
 
@@ -12,7 +16,7 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build the production bundle
+# Build the production bundle (VITE_API_BASE_URL is baked in here)
 RUN npm run build
 
 # ─── Stage 2: Serve with Nginx ────────────────────────────────────
