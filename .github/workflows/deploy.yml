@@ -50,7 +50,7 @@ jobs:
             ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:latest
             ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           build-args: |
-            VITE_API_BASE_URL=https://agelka-server.victoriousdesert-2974c53b.eastus.azurecontainerapps.io
+            VITE_API_BASE_URL=https://agelka-server.victoriousdesert-2974c53b.eastus.azurecontainerapps.io/api
 
   # ── Job 2: Deploy to Azure Container Apps ───────────────────────
   deploy:
