@@ -1,29 +1,23 @@
 // server/src/models/history/CustomerPaymentHistory.model.js
-const mongoose = require("mongoose");
+const mongoose = require('mongoose');
+const { getHistoryDb } = require('../../config/historyDb');
 
 const CustomerPaymentHistorySchema = new mongoose.Schema({
   paymentNo: { type: String },
-  customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
+  customer: { type: mongoose.Schema.Types.ObjectId },
   paymentDate: { type: Date },
   amount: { type: Number },
   method: { type: String },
   referenceNo: { type: String },
-  collectedBy: { type: mongoose.Schema.Types.ObjectId, ref: "SalesRep" },
+  collectedBy: { type: mongoose.Schema.Types.ObjectId },
   remarks: { type: String },
-  allocations: [{
-    invoice: { type: mongoose.Schema.Types.ObjectId },
-    amount: { type: Number },
-    _id: false,
-  }],
+  allocations: [{ invoice: { type: mongoose.Schema.Types.ObjectId }, amount: { type: Number }, _id: false }],
   status: { type: String },
-  createdAt: { type: Date },
-  updatedAt: { type: Date },
-  // ── History tracking ─────────────────────────────────────────
+  createdAt: { type: Date }, updatedAt: { type: Date },
   originalId: { type: mongoose.Schema.Types.ObjectId, index: true },
   period: { type: String, required: true, index: true },
   archivedAt: { type: Date, required: true },
-}, { timestamps: false, collection: "customerpayments_history" });
+}, { timestamps: false, collection: 'customerpayments_history' });
 
 CustomerPaymentHistorySchema.index({ period: 1, customer: 1 });
-
-module.exports = mongoose.model("CustomerPaymentHistory", CustomerPaymentHistorySchema);
+module.exports = getHistoryDb().model('CustomerPaymentHistory', CustomerPaymentHistorySchema);

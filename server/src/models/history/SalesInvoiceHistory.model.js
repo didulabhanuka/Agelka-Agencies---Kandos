@@ -1,8 +1,9 @@
 // server/src/models/history/SalesInvoiceHistory.model.js
-const mongoose = require("mongoose");
+const mongoose = require('mongoose');
+const { getHistoryDb } = require('../../config/historyDb');
 
 const InvoiceReturnItemSchema = new mongoose.Schema({
-  item: { type: mongoose.Schema.Types.ObjectId, ref: "Item" },
+  item: { type: mongoose.Schema.Types.ObjectId },
   qtyReturnedBase: { type: Number, default: 0 },
   qtyReturnedPrimary: { type: Number, default: 0 },
   valueReturnedBase: { type: Number, default: 0 },
@@ -28,22 +29,16 @@ const PaymentAllocationSchema = new mongoose.Schema({
 }, { _id: false });
 
 const SalesInvoiceHistorySchema = new mongoose.Schema({
-  // ── Original fields ──────────────────────────────────────────
   invoiceNo: { type: String },
-  salesRep: { type: mongoose.Schema.Types.ObjectId, ref: "SalesRep" },
-  customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
-  branch: { type: mongoose.Schema.Types.ObjectId, ref: "Branch" },
+  salesRep: { type: mongoose.Schema.Types.ObjectId },
+  customer: { type: mongoose.Schema.Types.ObjectId },
+  branch: { type: mongoose.Schema.Types.ObjectId },
   items: [{
-    item: { type: mongoose.Schema.Types.ObjectId, ref: "Item" },
-    sellingPriceBase: { type: Number },
-    sellingPricePrimary: { type: Number },
-    factorToBase: { type: Number },
-    primaryQty: { type: Number },
-    baseQty: { type: Number },
-    totalSellingValue: { type: Number },
-    discountPerUnit: { type: Number },
-    baseUom: { type: String },
-    primaryUom: { type: String },
+    item: { type: mongoose.Schema.Types.ObjectId },
+    sellingPriceBase: { type: Number }, sellingPricePrimary: { type: Number },
+    factorToBase: { type: Number }, primaryQty: { type: Number }, baseQty: { type: Number },
+    totalSellingValue: { type: Number }, discountPerUnit: { type: Number },
+    baseUom: { type: String }, primaryUom: { type: String },
   }],
   totalValue: { type: Number },
   hasReturns: { type: Boolean },
@@ -62,17 +57,13 @@ const SalesInvoiceHistorySchema = new mongoose.Schema({
   cancelledAt: { type: Date },
   createdAt: { type: Date },
   updatedAt: { type: Date },
-
-  // ── History tracking fields ───────────────────────────────────
+  // ── History tracking ──────────────────────────────────────────
   originalId: { type: mongoose.Schema.Types.ObjectId, index: true },
   period: { type: String, required: true, index: true },
   archivedAt: { type: Date, required: true },
-}, {
-  timestamps: false,
-  collection: "salesinvoices_history",
-});
+}, { timestamps: false, collection: 'salesinvoices_history' });
 
 SalesInvoiceHistorySchema.index({ period: 1, archivedAt: -1 });
 SalesInvoiceHistorySchema.index({ period: 1, customer: 1 });
 
-module.exports = mongoose.model("SalesInvoiceHistory", SalesInvoiceHistorySchema);
+module.exports = getHistoryDb().model('SalesInvoiceHistory', SalesInvoiceHistorySchema);

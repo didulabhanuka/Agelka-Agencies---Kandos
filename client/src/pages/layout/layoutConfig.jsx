@@ -27,6 +27,7 @@ import TourUnloadReport from '../reports/TourUnloadReport';
 import RemainingCollectionReport from '../reports/RemainingCollectionReport';
 
 import CleanerDashboard from '../settings/CleanerDashboard';
+import PeriodRolloverDashboard from '../settings/PeriodRolloverDashboard';
 
 // --------------------------------------------
 // ENCODED KEY MAPPING (C2)
@@ -66,6 +67,7 @@ export const KEY_MAP = {
   "remaining-collection": "rcr",
 
   "database-cleaner": "dbcln",
+  "period-rollover": "prd-rlv",
 };
 
 // --------------------------------------------
@@ -167,7 +169,8 @@ export const navItems = [
     icon: 'bi bi-gear-fill',
     rolesAllowed: ["Admin"],
     subtabs: [
-      { key: 'database-cleaner', label: 'Clean Data', rolesAllowed: ["Admin"], component: CleanerDashboard },
+      { key: 'database-cleaner',  label: 'Clean Data',      rolesAllowed: ["Admin"], component: CleanerDashboard },
+      { key: 'period-rollover',   label: 'Period Rollover',  rolesAllowed: ["Admin"], component: PeriodRolloverDashboard }, // ← ADD THIS
     ],
   },
 ];
