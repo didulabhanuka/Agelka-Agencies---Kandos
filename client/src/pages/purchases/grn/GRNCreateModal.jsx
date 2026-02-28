@@ -803,6 +803,30 @@ const GRNCreateModal = ({
           cursor: not-allowed;
         }
 
+        /* Read-only cost fields — visually distinct but still show value */
+        .grn-readonly-cost {
+          background-color: #f8fafc !important;
+          color: #374151 !important;
+          border-color: #e2e8f0 !important;
+          cursor: not-allowed;
+          font-weight: 600;
+        }
+
+        .grn-readonly-cost:focus {
+          outline: none;
+          box-shadow: none;
+          border-color: #e2e8f0 !important;
+        }
+
+        .grn-cost-label {
+          font-size: 10px;
+          color: #9ca3af;
+          margin-top: 3px;
+          display: flex;
+          align-items: center;
+          gap: 3px;
+        }
+
         .grn-summary-strip {
           border: 1px solid #e9ecef;
           border-radius: 12px;
@@ -1263,11 +1287,11 @@ const GRNCreateModal = ({
                           />
                         </td>
 
-                        {/* Cost Primary */}
+                        {/* Cost Primary — read-only, auto-filled from item */}
                         <td>
                           <input
                             type="number"
-                            className="form-control text-end"
+                            className="form-control text-end grn-readonly-cost"
                             value={
                               row.avgCostPrimary === 0 ||
                               row.avgCostPrimary === "" ||
@@ -1275,15 +1299,15 @@ const GRNCreateModal = ({
                                 ? ""
                                 : row.avgCostPrimary
                             }
-                            readOnly={isView}
-                            placeholder="Cost"
-                            onChange={(e) =>
-                              updateRow(i, {
-                                avgCostPrimary:
-                                  e.target.value === "" ? "" : Number(e.target.value),
-                              })
-                            }
+                            readOnly
+                            disabled
+                            placeholder="—"
+                            tabIndex={-1}
                           />
+                          <div className="grn-cost-label">
+                            <i className="bi bi-lock-fill" />
+                            Auto from item
+                          </div>
                         </td>
 
                         {/* Base Qty */}
@@ -1310,11 +1334,13 @@ const GRNCreateModal = ({
                           />
                         </td>
 
-                        {/* Cost Base */}
+                        {/* Cost Base — read-only, auto-filled from item */}
                         <td>
                           <input
                             type="number"
-                            className={`form-control text-end ${!hasBaseUOM ? "grn-na-field" : ""}`}
+                            className={`form-control text-end ${
+                              !hasBaseUOM ? "grn-na-field" : "grn-readonly-cost"
+                            }`}
                             value={
                               !hasBaseUOM
                                 ? ""
@@ -1324,17 +1350,17 @@ const GRNCreateModal = ({
                                 ? ""
                                 : row.avgCostBase
                             }
-                            readOnly={isView || !hasBaseUOM}
-                            disabled={!hasBaseUOM}
-                            placeholder={hasBaseUOM ? "Cost" : "N/A"}
-                            onChange={(e) => {
-                              if (!hasBaseUOM) return;
-                              updateRow(i, {
-                                avgCostBase:
-                                  e.target.value === "" ? "" : Number(e.target.value),
-                              });
-                            }}
+                            readOnly
+                            disabled
+                            placeholder={hasBaseUOM ? "—" : "N/A"}
+                            tabIndex={-1}
                           />
+                          {hasBaseUOM && (
+                            <div className="grn-cost-label">
+                              <i className="bi bi-lock-fill" />
+                              Auto from item
+                            </div>
+                          )}
                         </td>
 
                         {/* Discount */}

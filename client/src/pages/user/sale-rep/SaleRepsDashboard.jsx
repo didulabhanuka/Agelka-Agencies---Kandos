@@ -1,6 +1,7 @@
 // src/pages/SaleRepsDashboard.jsx
 import React, { useState, useEffect } from "react";
 import { ToastContainer, toast } from "react-toastify";
+import { useAuth } from "../../../context/AuthContext";
 import { getSalesReps, deleteSalesRep } from "../../../lib/api/users.api";
 
 import SalesRepModal from "./SalesRepModal";
@@ -8,6 +9,16 @@ import SalesRepModal from "./SalesRepModal";
 import "react-toastify/dist/ReactToastify.css";
 
 const SaleRepsDashboard = () => {
+  // --------------------------------------------------
+  // RBAC
+  // --------------------------------------------------
+  const { user } = useAuth();
+  const actorType = user?.actorType;
+  const role = user?.role;
+
+  const isAdminOrDataEntry =
+    actorType === "User" && (role === "Admin" || role === "DataEntry");
+
   // --------------------------------------------------
   // Local state
   // --------------------------------------------------
@@ -56,7 +67,6 @@ const SaleRepsDashboard = () => {
         ),
       ];
       setRoutes(uniqueRoutes);
-
     } catch (err) {
       console.error("❌ Failed to fetch sales representatives:", err);
       toast.error("Failed to fetch sales representatives");
@@ -71,7 +81,6 @@ const SaleRepsDashboard = () => {
   const applyFilters = () => {
     let data = [...salesReps];
 
-    // Search
     if (search.trim()) {
       const s = search.toLowerCase();
       data = data.filter(
@@ -82,12 +91,10 @@ const SaleRepsDashboard = () => {
       );
     }
 
-    // Status filter
     if (statusFilter !== "All") {
       data = data.filter((r) => (r.status || "active") === statusFilter);
     }
 
-    // Route filter
     if (routeFilter !== "All") {
       data = data.filter((r) => r.route === routeFilter);
     }
@@ -130,6 +137,113 @@ const SaleRepsDashboard = () => {
   // --------------------------------------------------
   return (
     <div className="container-fluid py-4 px-5 flex-wrap justify-content-between">
+      <style>{`
+        .reps-table-wrap {
+          max-height: 72vh;
+          overflow: auto;
+          border-radius: 14px;
+        }
+
+        .reps-table-wrap .modern-table thead th {
+          position: sticky;
+          top: 0;
+          z-index: 5;
+          background: #fff;
+          box-shadow: inset 0 -1px 0 #eef0f3;
+          white-space: nowrap;
+        }
+
+        .rep-row {
+          transition: background-color .15s ease, box-shadow .15s ease;
+        }
+
+        .rep-row:hover {
+          background: #fafbff;
+          box-shadow: inset 3px 0 0 #5c3e94;
+        }
+
+        .icon-btn-ux {
+          width: 32px;
+          height: 32px;
+          border-radius: 8px;
+          border: 1px solid #e5e7eb;
+          background: #fff;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          transition: all .15s ease;
+          cursor: pointer;
+        }
+
+        .icon-btn-ux:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 10px rgba(0,0,0,.08);
+        }
+
+        .icon-btn-ux.view:hover {
+          color: #1d4ed8;
+          border-color: #bfdbfe;
+          background: #eff6ff;
+        }
+
+        .icon-btn-ux.edit:hover {
+          color: #7c3aed;
+          border-color: #ddd6fe;
+          background: #f5f3ff;
+        }
+
+        .icon-btn-ux.delete:hover {
+          color: #b42318;
+          border-color: #fecdca;
+          background: #fef3f2;
+        }
+
+        .status-pill-ux {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 700;
+          padding: 4px 10px;
+          border: 1px solid transparent;
+          white-space: nowrap;
+        }
+
+        .status-pill-ux.pill-success {
+          background: #ecfdf3;
+          color: #027a48;
+          border-color: #abefc6;
+        }
+
+        .status-pill-ux.pill-danger {
+          background: #fef3f2;
+          color: #b42318;
+          border-color: #fecdca;
+        }
+
+        .result-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 10px;
+          border-radius: 999px;
+          background: #f8fafc;
+          border: 1px solid #e5e7eb;
+          font-size: 12px;
+          font-weight: 700;
+          color: #475467;
+        }
+
+        .table-top-note {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 10px;
+          flex-wrap: wrap;
+        }
+      `}</style>
 
       {/* Header */}
       <div className="pb-4">
@@ -153,7 +267,6 @@ const SaleRepsDashboard = () => {
           />
 
           <div className="dropdown-container">
-            {/* Status */}
             <select
               className="custom-select"
               value={statusFilter}
@@ -164,7 +277,6 @@ const SaleRepsDashboard = () => {
               <option value="inactive">Inactive</option>
             </select>
 
-            {/* Route */}
             <select
               className="custom-select"
               value={routeFilter}
@@ -180,102 +292,133 @@ const SaleRepsDashboard = () => {
           </div>
         </div>
 
-        <div className="filter-right">
-          <button className="action-btn" onClick={() => handleOpenModal("create")}>
-            + Add Sales Rep
-          </button>
-        </div>
+        {/* Add Sales Rep — hidden for Sales Reps */}
+        {isAdminOrDataEntry && (
+          <div className="filter-right">
+            <button className="action-btn" onClick={() => handleOpenModal("create")}>
+              + Add Sales Rep
+            </button>
+          </div>
+        )}
       </div>
 
       {/* --------------------------------------------------
         Table
       -------------------------------------------------- */}
       <div className="table-container p-3">
-        <table className="modern-table">
-          <thead>
-            <tr>
-              <th>Rep</th>
-              <th>Contact</th>
-              <th>Route</th>
-              <th>NIC</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
+        <div className="table-top-note">
+          <span className="result-badge">
+            <i className="bi bi-person-badge" />
+            {filteredReps.length} Rep{filteredReps.length === 1 ? "" : "s"}
+          </span>
+          {loading && (
+            <span className="small text-muted">
+              <i className="bi bi-arrow-repeat me-1" />
+              Loading...
+            </span>
+          )}
+        </div>
 
-          <tbody>
-            {filteredReps.length ? (
-              filteredReps.map((r) => (
-                <tr key={r._id}>
-                  <td>
-                    <div className="d-flex align-items-center gap-2">
-                      <div className="avatar-circle">
-                        {r.name?.charAt(0).toUpperCase() ||
-                          r.repCode?.charAt(0).toUpperCase() ||
-                          "R"}
+        <div className="reps-table-wrap">
+          <table className="modern-table">
+            <thead>
+              <tr>
+                <th>Rep</th>
+                <th>Contact</th>
+                <th>Route</th>
+                <th>NIC</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filteredReps.length ? (
+                filteredReps.map((r) => (
+                  <tr key={r._id} className="rep-row">
+                    <td>
+                      <div className="d-flex align-items-center gap-2">
+                        <div className="avatar-circle">
+                          {r.name?.charAt(0).toUpperCase() ||
+                            r.repCode?.charAt(0).toUpperCase() ||
+                            "R"}
+                        </div>
+                        <div>
+                          <div className="fw-semibold">{r.name || "-"}</div>
+                          <div className="text-muted small">{r.repCode || "-"}</div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="fw-semibold">{r.name || "-"}</div>
-                        <div className="text-muted small">{r.repCode || "-"}</div>
+                    </td>
+
+                    <td>{r.contactNumber || "-"}</td>
+                    <td>{r.route || "-"}</td>
+                    <td>{r.NIC || "-"}</td>
+
+                    <td>
+                      <span
+                        className={`status-pill-ux ${
+                          (r.status || "active") === "inactive"
+                            ? "pill-danger"
+                            : "pill-success"
+                        }`}
+                      >
+                        <i
+                          className={`bi ${
+                            (r.status || "active") === "inactive"
+                              ? "bi-x-circle-fill"
+                              : "bi-check-circle-fill"
+                          }`}
+                        />
+                        {(r.status || "active") === "inactive" ? "Inactive" : "Active"}
+                      </span>
+                    </td>
+
+                    <td>
+                      <div className="d-flex align-items-center gap-1">
+                        {/* View — always visible */}
+                        <button
+                          className="icon-btn-ux view"
+                          onClick={() => handleOpenModal("view", r)}
+                          title="View Rep"
+                        >
+                          <i className="bi bi-eye" />
+                        </button>
+
+                        {/* Edit — hidden for Sales Reps */}
+                        {isAdminOrDataEntry && (
+                          <button
+                            className="icon-btn-ux edit"
+                            onClick={() => handleOpenModal("edit", r)}
+                            title="Edit Rep"
+                          >
+                            <i className="bi bi-pencil" />
+                          </button>
+                        )}
+
+                        {/* Delete — hidden for Sales Reps */}
+                        {isAdminOrDataEntry && (
+                          <button
+                            className="icon-btn-ux delete"
+                            onClick={() => handleDelete(r._id)}
+                            title="Delete Rep"
+                          >
+                            <i className="bi bi-trash" />
+                          </button>
+                        )}
                       </div>
-                    </div>
-                  </td>
-
-                  <td>{r.contactNumber || "-"}</td>
-                  <td>{r.route || "-"}</td>
-                  <td>{r.NIC || "-"}</td>
-
-                  {/* Status pill */}
-                  <td>
-                    <span
-                      className={`status-pill ${
-                        (r.status || "active") === "inactive"
-                          ? "status-inactive"
-                          : "status-active"
-                      }`}
-                    >
-                      {(r.status || "active") === "inactive"
-                        ? "Inactive"
-                        : "Active"}
-                    </span>
-                  </td>
-
-                  {/* Action buttons */}
-                  <td>
-                    <div className="d-flex align-items-center gap-1">
-                      <button
-                        className="icon-btn"
-                        onClick={() => handleOpenModal("view", r)}
-                      >
-                        <i className="bi bi-eye" />
-                      </button>
-
-                      <button
-                        className="icon-btn"
-                        onClick={() => handleOpenModal("edit", r)}
-                      >
-                        <i className="bi bi-pencil" />
-                      </button>
-
-                      <button
-                        className="icon-btn"
-                        onClick={() => handleDelete(r._id)}
-                      >
-                        <i className="bi bi-trash" />
-                      </button>
-                    </div>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} className="text-center text-muted py-4">
+                    {loading ? "Loading sales representatives..." : "No sales representatives found."}
                   </td>
                 </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={6} className="text-center text-muted py-4">
-                  {loading ? "Loading sales representatives..." : "No sales representatives found."}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* --------------------------------------------------
@@ -289,7 +432,6 @@ const SaleRepsDashboard = () => {
         onSuccess={fetchSalesReps}
       />
 
-      {/* Toasts */}
       <ToastContainer position="top-right" autoClose={2000} />
     </div>
   );

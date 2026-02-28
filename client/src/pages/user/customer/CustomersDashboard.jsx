@@ -1,6 +1,7 @@
 // src/pages/CustomersDashboard.jsx
 import React, { useState, useEffect } from "react";
 import { ToastContainer, toast } from "react-toastify";
+import { useAuth } from "../../../context/AuthContext";
 
 import {
   getCustomers,
@@ -15,6 +16,18 @@ import CustomerSnapshot from "./CustomerSnapshot";
 import "react-toastify/dist/ReactToastify.css";
 
 const CustomersDashboard = () => {
+  // --------------------------------------------------
+  // RBAC
+  // --------------------------------------------------
+  const { user } = useAuth();
+  const actorType = user?.actorType;
+  const role = user?.role;
+
+  const isAdminOrDataEntry =
+    actorType === "User" && (role === "Admin" || role === "DataEntry");
+
+  const isSalesRep = actorType === "SalesRep";
+
   // --------------------------------------------------
   // State
   // --------------------------------------------------
@@ -37,9 +50,8 @@ const CustomersDashboard = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState("create"); // create | edit | view
   const [selectedCustomer, setSelectedCustomer] = useState(null);
-const [snapshotCustomerId, setSnapshotCustomerId] = useState(null);
-const [viewingSnapshot, setViewingSnapshot] = useState(false);
-
+  const [snapshotCustomerId, setSnapshotCustomerId] = useState(null);
+  const [viewingSnapshot, setViewingSnapshot] = useState(false);
 
   // --------------------------------------------------
   // Initial load
@@ -51,7 +63,7 @@ const [viewingSnapshot, setViewingSnapshot] = useState(false);
   // Re-apply filters whenever data or filters change
   useEffect(() => {
     applyFilters();
-  }, [customers, search, statusFilter, cityFilter, repFilter]);
+  }, [customers, search, statusFilter, cityFilter, repFilter, creditFilter]);
 
   // --------------------------------------------------
   // Fetch data
@@ -118,7 +130,7 @@ const [viewingSnapshot, setViewingSnapshot] = useState(false);
       data = data.filter((c) => (c.status || "active") === statusFilter);
     }
 
-    // credit filter
+    // Credit filter
     if (creditFilter !== "All") {
       data = data.filter((c) => c.creditStatus === creditFilter);
     }
@@ -174,38 +186,21 @@ const [viewingSnapshot, setViewingSnapshot] = useState(false);
     }
   };
 
-  // const getSalesRepLabel = (customer) => {
-  //   if (!customer.salesRep) return "-";
-
-  //   if (typeof customer.salesRep === "object" && customer.salesRep !== null) {
-  //     const r = customer.salesRep;
-  //     return (r.repCode || "") + (r.name ? " — " + r.name : "") || "-";
-  //   }
-
-  //   const rep = salesReps.find((r) => r._id === customer.salesRep);
-  //   if (rep) {
-  //     return `${rep.repCode} — ${rep.name}`;
-  //     // return `${rep.repCode} — ${rep.name}`;
-  //   }
-
-  //   return "-";
-  // };
-
   const getSalesRepLabel = (customer) => {
-  if (!customer.salesRep) return "-";
+    if (!customer.salesRep) return "-";
 
-  if (typeof customer.salesRep === "object" && customer.salesRep !== null) {
-    const r = customer.salesRep;
-    return r.name || "-";
-  }
+    if (typeof customer.salesRep === "object" && customer.salesRep !== null) {
+      const r = customer.salesRep;
+      return r.name || "-";
+    }
 
-  const rep = salesReps.find((r) => r._id === customer.salesRep);
-  if (rep) {
-    return rep.name;
-  }
+    const rep = salesReps.find((r) => r._id === customer.salesRep);
+    if (rep) {
+      return rep.name;
+    }
 
-  return "-";
-};
+    return "-";
+  };
 
   // --------------------------------------------------
   // Credit Toggle Handler
@@ -230,17 +225,15 @@ const [viewingSnapshot, setViewingSnapshot] = useState(false);
     setModalOpen(true);
   };
 
-  // replace handleOpenModal
-const handleOpenSnapshot = (customer) => {
-  setSnapshotCustomerId(customer._id);
-  setViewingSnapshot(true);
-};
+  const handleOpenSnapshot = (customer) => {
+    setSnapshotCustomerId(customer._id);
+    setViewingSnapshot(true);
+  };
 
-const handleBackFromSnapshot = () => {
-  setSnapshotCustomerId(null);
-  setViewingSnapshot(false);
-};
-
+  const handleBackFromSnapshot = () => {
+    setSnapshotCustomerId(null);
+    setViewingSnapshot(false);
+  };
 
   const handleCloseModal = () => {
     setModalOpen(false);
@@ -266,8 +259,113 @@ const handleBackFromSnapshot = () => {
   // --------------------------------------------------
   // Render
   // --------------------------------------------------
-  return  !viewingSnapshot ? (
+  return !viewingSnapshot ? (
     <div className="container-fluid py-4 px-5 flex-wrap justify-content-between">
+      <style>{`
+        .customers-table-wrap {
+          max-height: 72vh;
+          overflow: auto;
+          border-radius: 14px;
+        }
+
+        .customers-table-wrap .modern-table thead th {
+          position: sticky;
+          top: 0;
+          z-index: 5;
+          background: #fff;
+          box-shadow: inset 0 -1px 0 #eef0f3;
+          white-space: nowrap;
+        }
+
+        .customer-row {
+          transition: background-color .15s ease, box-shadow .15s ease;
+        }
+
+        .customer-row:hover {
+          background: #fafbff;
+          box-shadow: inset 3px 0 0 #5c3e94;
+        }
+
+        .icon-btn-ux {
+          width: 32px;
+          height: 32px;
+          border-radius: 8px;
+          border: 1px solid #e5e7eb;
+          background: #fff;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          transition: all .15s ease;
+          cursor: pointer;
+        }
+
+        .icon-btn-ux:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 10px rgba(0,0,0,.08);
+        }
+
+        .icon-btn-ux.view:hover {
+          color: #1d4ed8;
+          border-color: #bfdbfe;
+          background: #eff6ff;
+        }
+
+        .icon-btn-ux.edit:hover {
+          color: #7c3aed;
+          border-color: #ddd6fe;
+          background: #f5f3ff;
+        }
+
+        .icon-btn-ux.delete:hover {
+          color: #b42318;
+          border-color: #fecdca;
+          background: #fef3f2;
+        }
+
+        .icon-btn-ux.lock {
+          border-color: #fecdca;
+          background: #fef3f2;
+          color: #b42318;
+        }
+
+        .icon-btn-ux.lock:hover {
+          background: #fee2e2;
+          box-shadow: 0 4px 12px rgba(180,35,24,.18);
+        }
+
+        .icon-btn-ux.unlock {
+          border-color: #abefc6;
+          background: #f6fef9;
+          color: #027a48;
+        }
+
+        .icon-btn-ux.unlock:hover {
+          background: #ecfdf3;
+          box-shadow: 0 4px 12px rgba(2,122,72,.18);
+        }
+
+        .result-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 10px;
+          border-radius: 999px;
+          background: #f8fafc;
+          border: 1px solid #e5e7eb;
+          font-size: 12px;
+          font-weight: 700;
+          color: #475467;
+        }
+
+        .table-top-note {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 10px;
+          flex-wrap: wrap;
+        }
+      `}</style>
       {/* Header */}
       <div className="pb-4">
         <h2 className="page-title">Customers</h2>
@@ -290,17 +388,6 @@ const handleBackFromSnapshot = () => {
           />
 
           <div className="dropdown-container">
-            {/* Status */}
-            {/* <select
-              className="custom-select"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <option value="All">All Statuses</option>
-              <option value="active">Active</option>
-              <option value="suspended">Suspended</option>
-            </select> */}
-
             {/* Credit Status */}
             <select
               className="custom-select"
@@ -328,38 +415,40 @@ const handleBackFromSnapshot = () => {
                 </option>
               ))}
             </select>
-
-            {/* Sales Rep */}
-            {/* <select
-              className="custom-select"
-              value={repFilter}
-              onChange={(e) => setRepFilter(e.target.value)}
-            >
-              <option value="All">All Sales Reps</option>
-              {salesReps.map((r) => (
-                <option key={r._id} value={r._id}>
-                  {r.repCode} — {r.name}
-                </option>
-              ))}
-            </select> */}
           </div>
         </div>
 
-        {/* Add Customer Button */}
-        <div className="filter-right">
-          <button
-            className="action-btn"
-            onClick={() => handleOpenModal("create")}
-          >
-            + Add Customer
-          </button>
-        </div>
+        {/* Add Customer Button — hidden for Sales Reps */}
+        {isAdminOrDataEntry && (
+          <div className="filter-right">
+            <button
+              className="action-btn"
+              onClick={() => handleOpenModal("create")}
+            >
+              + Add Customer
+            </button>
+          </div>
+        )}
       </div>
 
       {/* --------------------------------------------------
         Table
       -------------------------------------------------- */}
       <div className="table-container p-3">
+        <div className="table-top-note">
+          <span className="result-badge">
+            <i className="bi bi-people" />
+            {filteredCustomers.length} Customer{filteredCustomers.length === 1 ? "" : "s"}
+          </span>
+          {loading && (
+            <span className="small text-muted">
+              <i className="bi bi-arrow-repeat me-1" />
+              Loading...
+            </span>
+          )}
+        </div>
+
+        <div className="customers-table-wrap">
         <table className="modern-table">
           <thead>
             <tr>
@@ -369,7 +458,6 @@ const handleBackFromSnapshot = () => {
               <th>Sales Rep</th>
               <th>Credit</th>
               <th>Credit Status</th>
-              {/* <th>Status</th> */}
               <th>Actions</th>
             </tr>
           </thead>
@@ -377,7 +465,7 @@ const handleBackFromSnapshot = () => {
           <tbody>
             {filteredCustomers.length ? (
               filteredCustomers.map((c) => (
-                <tr key={c._id}>
+                <tr key={c._id} className="customer-row">
                   {/* Customer Info */}
                   <td>
                     <div className="d-flex align-items-center gap-2">
@@ -432,60 +520,52 @@ const handleBackFromSnapshot = () => {
                     </span>
                   </td>
 
-                  {/* Active/Suspended */}
-                  {/* <td>
-                    <span
-                      className={`status-pill ${getStatusClass(c.status)}`}
-                    >
-                      {getStatusLabel(c.status)}
-                    </span>
-                  </td> */}
-
                   {/* Actions */}
                   <td>
                     <div className="d-flex align-items-center gap-1">
 
-                      {/* View */}
+                      {/* View — always visible */}
                       <button
-                        className="icon-btn"
+                        className="icon-btn-ux view"
                         onClick={() => handleOpenSnapshot(c)}
                         title="View Snapshot"
                       >
                         <i className="bi bi-eye"></i>
                       </button>
 
+                      {/* Edit — hidden for Sales Reps */}
+                      {isAdminOrDataEntry && (
+                        <button
+                          className="icon-btn-ux edit"
+                          onClick={() => handleOpenModal("edit", c)}
+                          title="Edit Customer"
+                        >
+                          <i className="bi bi-pencil"></i>
+                        </button>
+                      )}
 
-                      {/* Edit */}
-                      <button
-                        className="icon-btn"
-                        onClick={() => handleOpenModal("edit", c)}
-                      >
-                        <i className="bi bi-pencil"></i>
-                      </button>
+                      {/* Toggle Credit — hidden for Sales Reps */}
+                      {isAdminOrDataEntry && (
+                        <button
+                          className={`icon-btn-ux ${c.creditStatus === "blocked" ? "unlock" : "lock"}`}
+                          onClick={() => handleToggleCredit(c._id)}
+                          title={c.creditStatus === "blocked" ? "Unblock Credit" : "Block Credit"}
+                        >
+                          <i className={c.creditStatus === "blocked" ? "bi bi-unlock-fill" : "bi bi-lock-fill"}></i>
+                        </button>
+                      )}
 
-                      {/* Toggle Credit */}
-                      <button
-                        className="icon-btn"
-                        onClick={() => handleToggleCredit(c._id)}
-                        title={c.creditStatus === "blocked" ? "Unblock Credit" : "Block Credit"}
-                      >
-                        <i
-                          className={
-                            c.creditStatus === "blocked"
-                              ? "bi bi-unlock-fill text-success"
-                              : "bi bi-lock-fill text-danger"
-                          }
-                        ></i>
-                      </button>
+                      {/* Delete — hidden for Sales Reps */}
+                      {isAdminOrDataEntry && (
+                        <button
+                          className="icon-btn-ux delete"
+                          onClick={() => handleDelete(c._id)}
+                          title="Delete Customer"
+                        >
+                          <i className="bi bi-trash"></i>
+                        </button>
+                      )}
 
-                      {/* Delete */}
-                      <button
-                        className="icon-btn"
-                        onClick={() => handleDelete(c._id)}
-                      >
-                        <i className="bi bi-trash"></i>
-                      </button>
-                      
                     </div>
                   </td>
                 </tr>
@@ -499,6 +579,7 @@ const handleBackFromSnapshot = () => {
             )}
           </tbody>
         </table>
+        </div>
       </div>
 
       {/* --------------------------------------------------
@@ -515,19 +596,19 @@ const handleBackFromSnapshot = () => {
 
       <ToastContainer position="top-right" autoClose={2000} />
     </div>
-) : (
-  <div className="snapshot-page">
-    <button
-      className="action-btn mb-3"
-      onClick={handleBackFromSnapshot}
-      style={{marginLeft: "45px"}}
-    >
-      ← Back to Customers
-    </button>
+  ) : (
+    <div className="snapshot-page">
+      <button
+        className="action-btn mb-3"
+        onClick={handleBackFromSnapshot}
+        style={{ marginLeft: "45px" }}
+      >
+        ← Back to Customers
+      </button>
 
-    <CustomerSnapshot customerId={snapshotCustomerId} />
-  </div>
-);
+      <CustomerSnapshot customerId={snapshotCustomerId} />
+    </div>
+  );
 };
 
 export default CustomersDashboard;

@@ -54,40 +54,40 @@ async function createSalesReturn(payload) {
 
     const finalSalesRep = originalInvoice ? invoiceSalesRep : salesRep ? String(salesRep) : null;
 
-const items = (rawItems || []).map((line) => {
-  const itemId = toObjectId(line.item?._id || line.item);
-  const itemIdStr = String(itemId);
+    const items = (rawItems || []).map((line) => {
+      const itemId = toObjectId(line.item?._id || line.item);
+      const itemIdStr = String(itemId);
 
-  const qtyReturnPrimary = toNumber(line.qtyReturnPrimary || 0);
-  const qtyReturnBase = toNumber(line.qtyReturnBase || 0);
+      const qtyReturnPrimary = toNumber(line.qtyReturnPrimary || 0);
+      const qtyReturnBase = toNumber(line.qtyReturnBase || 0);
 
-  const rawSellingPriceBase = line.sellingPriceBase;
-  const rawSellingPricePrimary = line.sellingPricePrimary;
+      const rawSellingPriceBase = line.sellingPriceBase;
+      const rawSellingPricePrimary = line.sellingPricePrimary;
 
-  let sellingPriceBase = rawSellingPriceBase == null ? null : toNumber(rawSellingPriceBase);
-  let sellingPricePrimary = rawSellingPricePrimary == null ? null : toNumber(rawSellingPricePrimary);
+      let sellingPriceBase = rawSellingPriceBase == null ? null : toNumber(rawSellingPriceBase);
+      let sellingPricePrimary = rawSellingPricePrimary == null ? null : toNumber(rawSellingPricePrimary);
 
-  // Fix for primary-only items: set sellingPriceBase to 0 for primary-only items
-  if (qtyReturnBase === 0 && sellingPriceBase === null) {
-    sellingPriceBase = 0;  // Default to 0 for primary-only items
-  }
+      // Fix for primary-only items: set sellingPriceBase to 0 for primary-only items
+      if (qtyReturnBase === 0 && sellingPriceBase === null) {
+        sellingPriceBase = 0;  // Default to 0 for primary-only items
+      }
 
-  let factorToBase = invoiceItemFactorMap.get(itemIdStr) ?? line.factorToBase ?? 1;
-  factorToBase = toNumber(factorToBase) || 1;
+      let factorToBase = invoiceItemFactorMap.get(itemIdStr) ?? line.factorToBase ?? 1;
+      factorToBase = toNumber(factorToBase) || 1;
 
-  if (qtyReturnPrimary < 0 || qtyReturnBase < 0) throw new Error(`Invalid return quantity (negative) for item ${line.item}`);
-  if (qtyReturnPrimary === 0 && qtyReturnBase === 0) throw new Error(`At least one return quantity must be > 0 for item ${line.item}`);
-  if (qtyReturnBase > 0 && (!sellingPriceBase || sellingPriceBase <= 0)) throw new Error(`Invalid base selling price for item ${line.item} (qtyReturnBase > 0)`);
-  if (qtyReturnPrimary > 0 && (!sellingPricePrimary || sellingPricePrimary <= 0)) throw new Error(`Invalid primary selling price for item ${line.item} (qtyReturnPrimary > 0)`);
+      if (qtyReturnPrimary < 0 || qtyReturnBase < 0) throw new Error(`Invalid return quantity (negative) for item ${line.item}`);
+      if (qtyReturnPrimary === 0 && qtyReturnBase === 0) throw new Error(`At least one return quantity must be > 0 for item ${line.item}`);
+      if (qtyReturnBase > 0 && (!sellingPriceBase || sellingPriceBase <= 0)) throw new Error(`Invalid base selling price for item ${line.item} (qtyReturnBase > 0)`);
+      if (qtyReturnPrimary > 0 && (!sellingPricePrimary || sellingPricePrimary <= 0)) throw new Error(`Invalid primary selling price for item ${line.item} (qtyReturnPrimary > 0)`);
 
-  const discountPerUnit = line.discountPerUnit == null ? 0 : toNumber(line.discountPerUnit);
-  if (discountPerUnit < 0) throw new Error(`Invalid discount for item ${line.item}`);
-  if ((qtyReturnBase > 0 && sellingPriceBase != null && discountPerUnit > sellingPriceBase) || (qtyReturnPrimary > 0 && sellingPricePrimary != null && discountPerUnit > sellingPricePrimary)) throw new Error(`Discount cannot exceed selling price for item ${line.item}`);
+      const discountPerUnit = line.discountPerUnit == null ? 0 : toNumber(line.discountPerUnit);
+      if (discountPerUnit < 0) throw new Error(`Invalid discount for item ${line.item}`);
+      if ((qtyReturnBase > 0 && sellingPriceBase != null && discountPerUnit > sellingPriceBase) || (qtyReturnPrimary > 0 && sellingPricePrimary != null && discountPerUnit > sellingPricePrimary)) throw new Error(`Discount cannot exceed selling price for item ${line.item}`);
 
-  const totalSellingValue = qtyReturnPrimary * (sellingPricePrimary ?? 0) + qtyReturnBase * (sellingPriceBase ?? 0);
+      const totalSellingValue = qtyReturnPrimary * (sellingPricePrimary ?? 0) + qtyReturnBase * (sellingPriceBase ?? 0);
 
-  return { item: itemId, qtyReturnPrimary: Math.abs(qtyReturnPrimary), qtyReturnBase: Math.abs(qtyReturnBase), sellingPriceBase, sellingPricePrimary, factorToBase, discountPerUnit, totalSellingValue };
-});
+      return { item: itemId, qtyReturnPrimary: Math.abs(qtyReturnPrimary), qtyReturnBase: Math.abs(qtyReturnBase), sellingPriceBase, sellingPricePrimary, factorToBase, discountPerUnit, totalSellingValue };
+    });
 
     if (originalInvoice) {
       const invoiceWithRemaining = await getInvoice(originalInvoice, { salesRep: finalSalesRep });
@@ -155,35 +155,57 @@ async function approveSalesReturn(id, userId) {
       const baseQty = Math.abs(toNumber(line.qtyReturnBase));
       if (!primaryQty && !baseQty) continue;
 
-      const itemDoc = await Item.findById(line.item).select("avgCostBase avgCostPrimary factorToBase").session(session).lean();
+      const itemDoc = await Item.findById(line.item)
+        .select("avgCostBase avgCostPrimary factorToBase")
+        .session(session)
+        .lean();
       if (!itemDoc) throw Object.assign(new Error(`Item not found: ${line.item}`), { status: 400 });
 
       const avgCostBase = toNumber(itemDoc.avgCostBase);
       const avgCostPrimary = toNumber(itemDoc.avgCostPrimary);
       const factorToBase = toNumber(line.factorToBase || itemDoc.factorToBase || 1);
 
+      // ── Sales rep stock: ADD returned quantities back ────────────────────────
+      // A sales return means the customer is returning goods TO the sales rep,
+      // so the rep's on-hand stock must INCREASE by the returned amounts.
+      // We must NOT use computeIssueMovement here — that subtracts stock.
       if (salesRepId) {
-        const salesRepStock = await SalesRepStock.findOne({ salesRep: salesRepId, item: line.item }).session(session).lean();
-        if (!salesRepStock) throw Object.assign(new Error(`SalesRep stock not found for item ${line.item}`), { status: 400, code: "STOCK_NOT_FOUND" });
+        const salesRepStock = await SalesRepStock.findOne({
+          salesRep: salesRepId,
+          item: line.item,
+        })
+          .session(session)
+          .lean();
+
+        if (!salesRepStock) {
+          throw Object.assign(
+            new Error(`SalesRep stock not found for item ${line.item}`),
+            { status: 400, code: "STOCK_NOT_FOUND" }
+          );
+        }
 
         const currentPrimary = toNumber(salesRepStock.qtyOnHandPrimary || 0);
-        const currentBase = toNumber(salesRepStock.qtyOnHandBase || 0);
+        const currentBase    = toNumber(salesRepStock.qtyOnHandBase    || 0);
 
-        const { newPrimary, newBase } = computeIssueMovement({
-          currentPrimary,
-          currentBase,
-          issuePrimary: primaryQty,
-          issueBase: baseQty,
-          factorToBase,
-          errorMeta: { item: String(line.item), salesRep: salesRepId, returnId: String(doc._id) },
-        });
+        // ADD the returned qty back — customer is returning stock to the rep.
+        const newPrimary = currentPrimary + primaryQty;
+        const newBase    = currentBase    + baseQty;
 
         await SalesRepStock.findOneAndUpdate(
           { salesRep: salesRepId, item: line.item },
-          { $set: { qtyOnHandPrimary: newPrimary, qtyOnHandBase: newBase, stockValuePrimary: newPrimary * avgCostPrimary, stockValueBase: newBase * avgCostBase, factorToBase } },
+          {
+            $set: {
+              qtyOnHandPrimary:  newPrimary,
+              qtyOnHandBase:     newBase,
+              stockValuePrimary: newPrimary * avgCostPrimary,
+              stockValueBase:    newBase    * avgCostBase,
+              factorToBase,
+            },
+          },
           { new: true, session }
         );
       }
+      // ────────────────────────────────────────────────────────────────────────
 
       const itemTotalValue = baseQty * avgCostBase + primaryQty * avgCostPrimary;
 
@@ -229,50 +251,70 @@ async function approveSalesReturn(id, userId) {
       if (!invoiceDoc) throw new Error("Original invoice not found");
 
       for (const returnLine of doc.items || []) {
-        const invoiceLine = (invoiceDoc.items || []).find((invLine) => String(invLine.item) === String(returnLine.item));
+        const invoiceLine = (invoiceDoc.items || []).find(
+          (invLine) => String(invLine.item) === String(returnLine.item)
+        );
         if (!invoiceLine) throw new Error(`Returned item not found in original invoice: ${returnLine.item}`);
 
         const factorToBase = toNumber(invoiceLine.factorToBase || 1);
-        const invoiceTotalBase = toNumber(invoiceLine.primaryQty || 0) * factorToBase + toNumber(invoiceLine.baseQty || 0);
+        const invoiceTotalBase =
+          toNumber(invoiceLine.primaryQty || 0) * factorToBase + toNumber(invoiceLine.baseQty || 0);
 
         let alreadyReturnedBase = 0;
         for (const prevReturn of invoiceDoc.returns || []) {
           if (String(prevReturn.returnId) === String(doc._id)) continue;
           for (const prevItem of prevReturn.items || []) {
             if (String(prevItem.item) !== String(returnLine.item)) continue;
-            alreadyReturnedBase += toNumber(prevItem.qtyReturnedPrimary || 0) * factorToBase + toNumber(prevItem.qtyReturnedBase || 0);
+            alreadyReturnedBase +=
+              toNumber(prevItem.qtyReturnedPrimary || 0) * factorToBase +
+              toNumber(prevItem.qtyReturnedBase    || 0);
           }
         }
 
-        const currentBaseReturn = toNumber(returnLine.qtyReturnPrimary || 0) * factorToBase + toNumber(returnLine.qtyReturnBase || 0);
+        const currentBaseReturn =
+          toNumber(returnLine.qtyReturnPrimary || 0) * factorToBase +
+          toNumber(returnLine.qtyReturnBase    || 0);
 
         if (currentBaseReturn <= 0) throw new Error(`Invalid return quantity for item ${returnLine.item}`);
-        if (alreadyReturnedBase + currentBaseReturn > invoiceTotalBase) throw new Error(`Return exceeds invoice quantity for item ${returnLine.item}`);
+        if (alreadyReturnedBase + currentBaseReturn > invoiceTotalBase)
+          throw new Error(`Return exceeds invoice quantity for item ${returnLine.item}`);
       }
 
       invoiceDoc.hasReturns = true;
       invoiceDoc.returns = invoiceDoc.returns || [];
 
       const invoiceReturnItems = (doc.items || []).map((l) => {
-        const primaryQty = toNumber(l.qtyReturnPrimary || 0);
-        const baseQty = toNumber(l.qtyReturnBase || 0);
+        const primaryQty         = toNumber(l.qtyReturnPrimary  || 0);
+        const baseQty            = toNumber(l.qtyReturnBase     || 0);
         const sellingPricePrimary = toNumber(l.sellingPricePrimary || 0);
-        const sellingPriceBase = toNumber(l.sellingPriceBase || 0);
+        const sellingPriceBase    = toNumber(l.sellingPriceBase    || 0);
 
         return {
           item: l.item,
-          qtyReturnedPrimary: primaryQty,
-          qtyReturnedBase: baseQty,
+          qtyReturnedPrimary:   primaryQty,
+          qtyReturnedBase:      baseQty,
           valueReturnedPrimary: primaryQty * sellingPricePrimary,
-          valueReturnedBase: baseQty * sellingPriceBase,
-          totalValueReturned: primaryQty * sellingPricePrimary + baseQty * sellingPriceBase,
+          valueReturnedBase:    baseQty    * sellingPriceBase,
+          totalValueReturned:   primaryQty * sellingPricePrimary + baseQty * sellingPriceBase,
         };
       });
 
-      invoiceDoc.returns.push({ returnId: doc._id, returnNo: doc.returnNo, returnDate: doc.returnDate, totalReturnValue: doc.totalReturnValue, items: invoiceReturnItems });
+      invoiceDoc.returns.push({
+        returnId: doc._id,
+        returnNo: doc.returnNo,
+        returnDate: doc.returnDate,
+        totalReturnValue: doc.totalReturnValue,
+        items: invoiceReturnItems,
+      });
 
-      invoiceDoc.totalReturnedValue = invoiceDoc.returns.reduce((sum, r) => sum + toNumber(r.totalReturnValue), 0);
-      invoiceDoc.totalBalanceValue = Math.max(toNumber(invoiceDoc.totalValue) - toNumber(invoiceDoc.totalReturnedValue), 0);
+      invoiceDoc.totalReturnedValue = invoiceDoc.returns.reduce(
+        (sum, r) => sum + toNumber(r.totalReturnValue),
+        0
+      );
+      invoiceDoc.totalBalanceValue = Math.max(
+        toNumber(invoiceDoc.totalValue) - toNumber(invoiceDoc.totalReturnedValue),
+        0
+      );
 
       await invoiceDoc.save({ session });
     }
@@ -337,7 +379,7 @@ async function deleteSalesReturn(id) {
     // Remove the sales return
     await doc.deleteOne({ session });
 
-    // Update customer (optional based on your business logic)
+    // Update customer
     await Customer.findByIdAndUpdate(doc.customer, { $pull: { returns: doc._id } }, { session });
 
     await session.commitTransaction();
@@ -373,7 +415,7 @@ async function updateSalesReturn(id, updatePayload) {
     // Save the updated document
     await doc.save({ session });
 
-    // You can add additional logic to handle related updates (e.g., update customer returns)
+    // Handle related customer updates
     if (updatePayload.items) {
       await Customer.findByIdAndUpdate(doc.customer, { $set: { returns: doc._id } }, { session });
     }

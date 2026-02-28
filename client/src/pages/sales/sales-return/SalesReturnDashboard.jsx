@@ -21,7 +21,6 @@ import "bootstrap-icons/font/bootstrap-icons.css";
 import "react-toastify/dist/ReactToastify.css";
 
 const SalesReturnDashboard = () => {
-  // RBAC flags
   const { user } = useAuth();
   const actorType = user?.actorType;
   const role = user?.role;
@@ -32,49 +31,34 @@ const SalesReturnDashboard = () => {
   const isSalesRep = actorType === "SalesRep";
 
   const loggedInSalesRepId =
-    user?.id ||
-    user?._id ||
-    user?.salesRep?._id ||
-    user?.salesRepId ||
-    user?.actorId ||
-    "";
+    user?.id || user?._id || user?.salesRep?._id || user?.salesRepId || user?.actorId || "";
 
-  // Local state
   const [loading, setLoading] = useState(false);
   const [returns, setReturns] = useState([]);
   const [branches, setBranches] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [salesReps, setSalesReps] = useState([]);
 
-  // Filters
   const [search, setSearch] = useState("");
   const [customerFilter, setCustomerFilter] = useState("All");
   const [branchFilter, setBranchFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [salesRepFilter, setSalesRepFilter] = useState("All");
 
-  // Column sorting
-  const [sortConfig, setSortConfig] = useState({
-    key: "returnDate",
-    direction: "desc",
-  });
+  const [sortConfig, setSortConfig] = useState({ key: "returnDate", direction: "desc" });
 
-  // Modals
   const [selectedReturn, setSelectedReturn] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState("create"); // create | view | edit
+  const [modalMode, setModalMode] = useState("create");
 
-  // Invoice View Modal
   const [invoiceViewOpen, setInvoiceViewOpen] = useState(false);
   const [invoiceForView, setInvoiceForView] = useState(null);
 
-  // Initial load
   useEffect(() => {
     fetchAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdminOrDataEntry]);
 
-  // Fetch all
   const fetchAll = async () => {
     setLoading(true);
     try {
@@ -82,19 +66,12 @@ const SalesReturnDashboard = () => {
       if (isAdminOrDataEntry) requests.push(getSalesReps());
 
       const results = await Promise.all(requests);
-
-      const retRes = results[0];
-      const branchRes = results[1];
-      const custRes = results[2];
-      const srRes = isAdminOrDataEntry ? results[3] : null;
-
-      const rows = Array.isArray(retRes) ? retRes : retRes?.data || [];
+      const rows = Array.isArray(results[0]) ? results[0] : results[0]?.data || [];
 
       setReturns(rows);
-      setBranches(branchRes?.data || branchRes || []);
-      setCustomers(custRes || []);
-      setSalesReps(isAdminOrDataEntry ? srRes?.data || srRes || [] : []);
-
+      setBranches(results[1]?.data || results[1] || []);
+      setCustomers(results[2] || []);
+      setSalesReps(isAdminOrDataEntry ? results[3]?.data || results[3] || [] : []);
       if (!isAdminOrDataEntry) setSalesRepFilter("All");
     } catch (err) {
       console.error("Failed loading sales return dashboard:", err);
@@ -104,112 +81,54 @@ const SalesReturnDashboard = () => {
     }
   };
 
-  // Helpers
   const formatCurrency = (value) => {
     const n = Number(value || 0);
-    return `Rs. ${new Intl.NumberFormat("en-LK", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(n)}`;
+    return `Rs. ${new Intl.NumberFormat("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)}`;
   };
 
   const formatDate = (value) => {
     if (!value) return "-";
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return "-";
-    return d.toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-    });
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "2-digit" });
   };
 
-  const getReturnSalesRepId = (ret) =>
-    ret?.salesRep?._id ||
-    ret?.salesRep ||
-    ret?.originalInvoice?.salesRep?._id ||
-    ret?.originalInvoice?.salesRep ||
-    ret?.salesRepId ||
-    "";
-
-  const getReturnSalesRepName = (ret) =>
-    ret?.salesRep?.name ||
-    ret?.salesRep?.fullName ||
-    ret?.originalInvoice?.salesRep?.name ||
-    ret?.originalInvoice?.salesRep?.fullName ||
-    ret?.originalInvoice?.salesRep?.email ||
-    ret?.salesRep?.email ||
-    "-";
-
-  const getReturnSalesRepCode = (ret) =>
-    ret?.salesRep?.repCode || ret?.originalInvoice?.salesRep?.repCode || "";
+  const getReturnSalesRepId   = (ret) => ret?.salesRep?._id || ret?.salesRep || ret?.originalInvoice?.salesRep?._id || ret?.originalInvoice?.salesRep || ret?.salesRepId || "";
+  const getReturnSalesRepName = (ret) => ret?.salesRep?.name || ret?.salesRep?.fullName || ret?.originalInvoice?.salesRep?.name || ret?.originalInvoice?.salesRep?.fullName || ret?.originalInvoice?.salesRep?.email || ret?.salesRep?.email || "-";
+  const getReturnSalesRepCode = (ret) => ret?.salesRep?.repCode || ret?.originalInvoice?.salesRep?.repCode || "";
 
   const getStatusMeta = (status) => {
     switch (status) {
-      case "approved":
-        return {
-          label: "Approved",
-          className: "pill-success",
-          icon: "bi-check-circle-fill",
-        };
-      case "cancelled":
-        return {
-          label: "Cancelled",
-          className: "pill-danger",
-          icon: "bi-x-circle-fill",
-        };
-      case "draft":
-        return {
-          label: "Draft",
-          className: "pill-muted",
-          icon: "bi-file-earmark-text-fill",
-        };
+      case "approved":        return { label: "Approved",            className: "pill-success", icon: "bi-check-circle-fill" };
+      case "cancelled":       return { label: "Cancelled",           className: "pill-danger",  icon: "bi-x-circle-fill" };
+      case "draft":           return { label: "Draft",               className: "pill-muted",   icon: "bi-file-earmark-text-fill" };
       case "waiting_for_approval":
-      default:
-        return {
-          label: isSalesRep ? "Waiting for Admin Approval" : "Waiting for Approval",
-          className: "pill-warning",
-          icon: "bi-hourglass-split",
-        };
+      default:                return { label: isSalesRep ? "Waiting for Admin Approval" : "Waiting for Approval", className: "pill-warning", icon: "bi-hourglass-split" };
     }
   };
 
-  const getReturnTotal = (ret) =>
-    Number(ret?.totalReturnValue || ret?.totalValue || 0);
+  const getReturnTotal = (ret) => Number(ret?.totalReturnValue || ret?.totalValue || 0);
 
-  // Sort helpers
   const getSortValue = (ret, key) => {
     switch (key) {
-      case "returnNo":
-        return String(ret.returnNo || "").toLowerCase();
-      case "customer":
-        return String(ret.customer?.name || "").toLowerCase();
-      case "branch":
-        return String(ret.branch?.name || "").toLowerCase();
-      case "salesRep":
-        return String(
-          `${getReturnSalesRepCode(ret)} ${getReturnSalesRepName(ret)}`.trim()
-        ).toLowerCase();
-      case "invoiceNo":
-        return String(ret.originalInvoice?.invoiceNo || "").toLowerCase();
-      case "amount":
-        return Number(getReturnTotal(ret) || 0);
-      case "status":
-        return String(ret.status || "").toLowerCase();
-      case "returnDate":
-        return new Date(ret.returnDate || 0).getTime() || 0;
-      default:
-        return "";
+      case "returnNo":   return String(ret.returnNo || "").toLowerCase();
+      case "customer":   return String(ret.customer?.name || "").toLowerCase();
+      case "branch":     return String(ret.branch?.name || "").toLowerCase();
+      case "salesRep":   return String(`${getReturnSalesRepCode(ret)} ${getReturnSalesRepName(ret)}`.trim()).toLowerCase();
+      case "invoiceNo":  return String(ret.originalInvoice?.invoiceNo || "").toLowerCase();
+      case "amount":     return Number(getReturnTotal(ret) || 0);
+      case "status":     return String(ret.status || "").toLowerCase();
+      case "returnDate": return new Date(ret.returnDate || 0).getTime() || 0;
+      default:           return "";
     }
   };
 
   const handleSort = (key) => {
-    setSortConfig((prev) => {
-      if (prev.key === key) {
-        return { key, direction: prev.direction === "asc" ? "desc" : "asc" };
-      }
-      return { key, direction: "asc" };
-    });
+    setSortConfig((prev) =>
+      prev.key === key
+        ? { key, direction: prev.direction === "asc" ? "desc" : "asc" }
+        : { key, direction: "asc" }
+    );
   };
 
   const getSortIcon = (key) => {
@@ -217,96 +136,51 @@ const SalesReturnDashboard = () => {
     return sortConfig.direction === "asc" ? "bi-sort-down" : "bi-sort-up";
   };
 
-  // Filters + sorting via useMemo
   const filteredReturns = useMemo(() => {
     let data = [...returns];
     const s = search.trim().toLowerCase();
 
-    if (isSalesRep && loggedInSalesRepId) {
-      data = data.filter((ret) => {
-        const srId = getReturnSalesRepId(ret);
-        return String(srId) === String(loggedInSalesRepId);
-      });
-    }
+    if (isSalesRep && loggedInSalesRepId)
+      data = data.filter((ret) => String(getReturnSalesRepId(ret)) === String(loggedInSalesRepId));
 
-    if (s) {
+    if (s)
       data = data.filter((ret) => {
-        const returnNo = ret.returnNo?.toLowerCase() || "";
+        const returnNo     = ret.returnNo?.toLowerCase() || "";
         const customerName = ret.customer?.name?.toLowerCase() || "";
         const customerCode = ret.customer?.customerCode?.toLowerCase() || "";
-        const branchName = ret.branch?.name?.toLowerCase() || "";
-        const invoiceNo = ret.originalInvoice?.invoiceNo?.toLowerCase() || "";
-        const srName = getReturnSalesRepName(ret).toLowerCase();
-        const srCode = getReturnSalesRepCode(ret).toLowerCase();
-
+        const branchName   = ret.branch?.name?.toLowerCase() || "";
+        const invoiceNo    = ret.originalInvoice?.invoiceNo?.toLowerCase() || "";
+        const srName       = getReturnSalesRepName(ret).toLowerCase();
+        const srCode       = getReturnSalesRepCode(ret).toLowerCase();
         return (
-          returnNo.includes(s) ||
-          customerName.includes(s) ||
-          customerCode.includes(s) ||
-          branchName.includes(s) ||
-          invoiceNo.includes(s) ||
+          returnNo.includes(s) || customerName.includes(s) || customerCode.includes(s) ||
+          branchName.includes(s) || invoiceNo.includes(s) ||
           (isAdminOrDataEntry && (srName.includes(s) || srCode.includes(s)))
         );
       });
-    }
 
-    if (customerFilter !== "All") {
-      data = data.filter((ret) => ret.customer?._id === customerFilter);
-    }
-
-    if (branchFilter !== "All") {
-      data = data.filter((ret) => ret.branch?._id === branchFilter);
-    }
-
-    if (statusFilter !== "All") {
-      data = data.filter((ret) => ret.status === statusFilter);
-    }
-
-    if (isAdminOrDataEntry && salesRepFilter !== "All") {
-      data = data.filter(
-        (ret) => String(getReturnSalesRepId(ret)) === String(salesRepFilter)
-      );
-    }
+    if (customerFilter !== "All") data = data.filter((ret) => ret.customer?._id === customerFilter);
+    if (branchFilter   !== "All") data = data.filter((ret) => ret.branch?._id   === branchFilter);
+    if (statusFilter   !== "All") data = data.filter((ret) => ret.status         === statusFilter);
+    if (isAdminOrDataEntry && salesRepFilter !== "All")
+      data = data.filter((ret) => String(getReturnSalesRepId(ret)) === String(salesRepFilter));
 
     data.sort((a, b) => {
       const aVal = getSortValue(a, sortConfig.key);
       const bVal = getSortValue(b, sortConfig.key);
       if (aVal < bVal) return sortConfig.direction === "asc" ? -1 : 1;
-      if (aVal > bVal) return sortConfig.direction === "asc" ? 1 : -1;
+      if (aVal > bVal) return sortConfig.direction === "asc" ?  1 : -1;
       return 0;
     });
 
     return data;
-  }, [
-    returns,
-    search,
-    customerFilter,
-    branchFilter,
-    statusFilter,
-    salesRepFilter,
-    isAdminOrDataEntry,
-    isSalesRep,
-    loggedInSalesRepId,
-    sortConfig,
-  ]);
+  }, [returns, search, customerFilter, branchFilter, statusFilter, salesRepFilter, isAdminOrDataEntry, isSalesRep, loggedInSalesRepId, sortConfig]);
 
-  // Actions
-  const openCreateModal = () => {
-    setSelectedReturn(null);
-    setModalMode("create");
-    setModalOpen(true);
-  };
+  // ── Actions ────────────────────────────────────────────────────────────────
 
-  const closeModal = () => {
-    setModalOpen(false);
-    setSelectedReturn(null);
-    setModalMode("create");
-  };
-
-  const handleSuccess = async () => {
-    closeModal();
-    await fetchAll();
-  };
+  const openCreateModal = () => { setSelectedReturn(null); setModalMode("create"); setModalOpen(true); };
+  const closeModal      = () => { setModalOpen(false); setSelectedReturn(null); setModalMode("create"); };
+  const handleSuccess   = async () => { closeModal(); await fetchAll(); };
 
   const handleView = async (ret) => {
     try {
@@ -316,11 +190,9 @@ const SalesReturnDashboard = () => {
       setModalMode("view");
       setModalOpen(true);
     } catch (err) {
-      console.error("Failed to load return details:", err);
+      console.error(err);
       toast.error("Failed to load sales return details.");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   const handleEdit = async (ret) => {
@@ -331,178 +203,116 @@ const SalesReturnDashboard = () => {
       setModalMode("edit");
       setModalOpen(true);
     } catch (err) {
-      console.error("Failed to load return for editing:", err);
+      console.error(err);
       toast.error("Failed to load sales return for editing.");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   const handleApprove = async (ret) => {
-    if (ret.status !== "waiting_for_approval") {
-      toast.info("Only returns waiting for approval can be approved.");
-      return;
-    }
-
+    if (ret.status !== "waiting_for_approval") { toast.info("Only returns waiting for approval can be approved."); return; }
     if (!window.confirm(`Approve sales return ${ret.returnNo}?`)) return;
-
     try {
       setLoading(true);
       const res = await approveSalesReturn(ret._id);
       toast.success(res?.message || "Sales return approved successfully.");
       await fetchAll();
     } catch (err) {
-      console.error("Failed approving sales return:", err);
+      console.error(err);
       toast.error(err?.response?.data?.message || "Failed to approve sales return.");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-  // Renamed to avoid conflict with the imported deleteSalesReturn
   const handleDelete = async (ret) => {
     if (!window.confirm(`Are you sure you want to delete return ${ret.returnNo}?`)) return;
-
     try {
       setLoading(true);
       const res = await deleteSalesReturn(ret._id);
       toast.success(res?.message || "Sales return deleted successfully.");
       await fetchAll();
     } catch (err) {
-      console.error("Failed to delete sales return:", err);
+      console.error(err);
       toast.error(err?.response?.data?.message || "Failed to delete sales return.");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-  const handleViewInvoiceFromReturnModal = async (invoiceId) => {
-    if (!invoiceId) return;
+  // ── Invoice view ───────────────────────────────────────────────────────────
 
+  const openInvoiceView = async (invoiceId) => {
+    if (!invoiceId) return;
     try {
       setLoading(true);
       const full = await getSalesInvoice(invoiceId);
       setInvoiceForView(full);
       setInvoiceViewOpen(true);
     } catch (err) {
-      console.error("Failed loading invoice:", err);
+      console.error(err);
       toast.error("Failed to load original invoice.");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-  const closeInvoiceViewModal = () => {
-    setInvoiceViewOpen(false);
-    setInvoiceForView(null);
-  };
+  const closeInvoiceViewModal = () => { setInvoiceViewOpen(false); setInvoiceForView(null); };
 
   const resetFilters = () => {
-    setSearch("");
-    setCustomerFilter("All");
-    setBranchFilter("All");
-    setStatusFilter("All");
-    setSalesRepFilter("All");
+    setSearch(""); setCustomerFilter("All"); setBranchFilter("All");
+    setStatusFilter("All"); setSalesRepFilter("All");
     setSortConfig({ key: "returnDate", direction: "desc" });
   };
 
-  const tableColSpan = isAdminOrDataEntry ? 9 : 8;
-
-  const visibleCountLabel = useMemo(() => {
-    const count = filteredReturns.length;
-    return `${count} return${count === 1 ? "" : "s"}`;
-  }, [filteredReturns.length]);
+  const tableColSpan     = isAdminOrDataEntry ? 9 : 8;
+  const visibleCountLabel = useMemo(() => { const c = filteredReturns.length; return `${c} return${c === 1 ? "" : "s"}`; }, [filteredReturns.length]);
 
   return (
     <div className="container-fluid py-4 px-5">
-      <style>
-        {`
-          .return-table-wrap {
-            max-height: 72vh;
-            overflow: auto;
-            border-radius: 14px;
-          }
-          .return-table-wrap .modern-table thead th {
-            position: sticky;
-            top: 0;
-            z-index: 5;
-            background: #fff;
-            box-shadow: inset 0 -1px 0 #eef0f3;
-            white-space: nowrap;
-          }
-          .return-row {
-            transition: background-color .15s ease, box-shadow .15s ease;
-          }
-          .return-row:hover {
-            background: #fafbff;
-            box-shadow: inset 3px 0 0 #5c3e94;
-          }
-          .col-return-main { min-width: 170px; }
-          .return-no { font-weight: 700; color: #111827; letter-spacing: 0.01em; }
-          .return-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
-          .mini-pill {
-            display: inline-flex; align-items: center; padding: 2px 8px;
-            border-radius: 999px; font-size: 11px; font-weight: 600;
-            margin-top: 4px; border: 1px solid transparent;
-          }
-          .mini-pill.neutral { background: #f3f4f6; color: #4b5563; border-color: #e5e7eb; }
-          .mini-pill.info { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
-          .status-pill-ux {
-            display: inline-flex; align-items: center; gap: 6px;
-            border-radius: 999px; font-size: 12px; font-weight: 700;
-            padding: 4px 10px; border: 1px solid transparent; white-space: nowrap;
-          }
-          .status-pill-ux.pill-success { background: #ecfdf3; color: #027a48; border-color: #abefc6; }
-          .status-pill-ux.pill-warning { background: #fffaeb; color: #b54708; border-color: #fedf89; }
-          .status-pill-ux.pill-danger { background: #fef3f2; color: #b42318; border-color: #fecdca; }
-          .status-pill-ux.pill-muted { background: #f2f4f7; color: #475467; border-color: #e4e7ec; }
-          .amount-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
-          .amount-sub.invoice { color: #1d4ed8; }
-          .icon-btn-ux {
-            width: 32px; height: 32px; border-radius: 8px;
-            border: 1px solid #e5e7eb; background: #fff;
-            display: inline-flex; align-items: center; justify-content: center;
-            transition: all .15s ease;
-          }
-          .icon-btn-ux:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,.08); }
-          .icon-btn-ux.view:hover { color: #1d4ed8; border-color: #bfdbfe; background: #eff6ff; }
-          .icon-btn-ux.edit:hover { color: #b45309; border-color: #fde68a; background: #fffbeb; }
-          .icon-btn-ux.delete { border-color: #fecdca; background: #fff5f5; color: #b42318; }
-          .icon-btn-ux.delete:hover { background: #fef2f2; box-shadow: 0 4px 12px rgba(180,35,24,.18); }
-          .icon-btn-ux.approve { border-color: #abefc6; background: #f6fef9; color: #027a48; }
-          .icon-btn-ux.approve:hover { background: #ecfdf3; box-shadow: 0 4px 12px rgba(2,122,72,.18); }
-          .filter-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-          .filter-grid .filter-input { min-width: 220px; }
-          .filter-grid .custom-select { min-width: 160px; }
-          .btn-soft {
-            border: 1px solid #e5e7eb; background: #fff; color: #344054;
-            border-radius: 10px; padding: 8px 12px; font-size: 13px;
-            font-weight: 600; min-height: 42px; white-space: nowrap;
-          }
-          .btn-soft:hover { background: #f9fafb; border-color: #d0d5dd; }
-          .result-badge {
-            display: inline-flex; align-items: center; gap: 6px;
-            padding: 6px 10px; border-radius: 999px; background: #f8fafc;
-            border: 1px solid #e5e7eb; font-size: 12px; font-weight: 700; color: #475467;
-          }
-          .table-top-note {
-            display: flex; justify-content: space-between; align-items: center;
-            gap: 10px; margin-bottom: 10px; flex-wrap: wrap;
-          }
-          .sort-btn {
-            border: none; background: transparent; padding: 0; font-weight: 600;
-            display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: inherit;
-          }
-          .sort-btn:hover { color: #5c3e94; }
-        `}
-      </style>
+      <style>{`
+        .return-table-wrap { max-height: 72vh; overflow: auto; border-radius: 14px; }
+        .return-table-wrap .modern-table thead th { position: sticky; top: 0; z-index: 5; background: #fff; box-shadow: inset 0 -1px 0 #eef0f3; white-space: nowrap; }
+        .return-row { transition: background-color .15s ease, box-shadow .15s ease; }
+        .return-row:hover { background: #fafbff; box-shadow: inset 3px 0 0 #5c3e94; }
+        .col-return-main { min-width: 170px; }
+        .return-no { font-weight: 700; color: #111827; letter-spacing: 0.01em; }
+        .return-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
+        .mini-pill { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; margin-top: 4px; border: 1px solid transparent; }
+        .mini-pill.neutral { background: #f3f4f6; color: #4b5563; border-color: #e5e7eb; }
+        .mini-pill.info    { background: #eff6ff; color: #1d4ed8;  border-color: #bfdbfe; }
+        .status-pill-ux { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; font-size: 12px; font-weight: 700; padding: 4px 10px; border: 1px solid transparent; white-space: nowrap; }
+        .status-pill-ux.pill-success { background: #ecfdf3; color: #027a48; border-color: #abefc6; }
+        .status-pill-ux.pill-warning { background: #fffaeb; color: #b54708; border-color: #fedf89; }
+        .status-pill-ux.pill-danger  { background: #fef3f2; color: #b42318; border-color: #fecdca; }
+        .status-pill-ux.pill-muted   { background: #f2f4f7; color: #475467; border-color: #e4e7ec; }
+        .amount-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
+        .icon-btn-ux { width: 32px; height: 32px; border-radius: 8px; border: 1px solid #e5e7eb; background: #fff; display: inline-flex; align-items: center; justify-content: center; transition: all .15s ease; }
+        .icon-btn-ux:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,.08); }
+        .icon-btn-ux.view:hover    { color: #1d4ed8; border-color: #bfdbfe; background: #eff6ff; }
+        .icon-btn-ux.edit:hover    { color: #b45309; border-color: #fde68a; background: #fffbeb; }
+        .icon-btn-ux.delete        { border-color: #fecdca; background: #fff5f5; color: #b42318; }
+        .icon-btn-ux.delete:hover  { background: #fef2f2; box-shadow: 0 4px 12px rgba(180,35,24,.18); }
+        .icon-btn-ux.approve       { border-color: #abefc6; background: #f6fef9; color: #027a48; }
+        .icon-btn-ux.approve:hover { background: #ecfdf3; box-shadow: 0 4px 12px rgba(2,122,72,.18); }
+        .filter-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+        .filter-grid .filter-input { min-width: 220px; }
+        .filter-grid .custom-select { min-width: 160px; }
+        .btn-soft { border: 1px solid #e5e7eb; background: #fff; color: #344054; border-radius: 10px; padding: 8px 12px; font-size: 13px; font-weight: 600; min-height: 42px; white-space: nowrap; }
+        .btn-soft:hover { background: #f9fafb; border-color: #d0d5dd; }
+        .result-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: #f8fafc; border: 1px solid #e5e7eb; font-size: 12px; font-weight: 700; color: #475467; }
+        .table-top-note { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+        .sort-btn { border: none; background: transparent; padding: 0; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: inherit; }
+        .sort-btn:hover { color: #5c3e94; }
+
+        /* Clickable invoice number in table */
+        .invoice-link-btn {
+          background: none; border: none; padding: 0;
+          color: #1d4ed8; font-weight: 600; font-size: 0.875rem;
+          cursor: pointer; text-align: left;
+          text-decoration: underline; text-underline-offset: 2px;
+          transition: color .15s;
+        }
+        .invoice-link-btn:hover { color: #1e40af; }
+      `}</style>
 
       {/* Header */}
       <div className="pb-4">
         <h2 className="page-title">Sales Returns</h2>
-        <p className="page-subtitle">
-          Review, manage, and approve customer sales returns across all branches.
-        </p>
+        <p className="page-subtitle">Review, manage, and approve customer sales returns across all branches.</p>
       </div>
 
       {/* Filter bar */}
@@ -516,129 +326,57 @@ const SalesReturnDashboard = () => {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-
-            <select
-              className="custom-select"
-              value={customerFilter}
-              onChange={(e) => setCustomerFilter(e.target.value)}
-            >
+            <select className="custom-select" value={customerFilter} onChange={(e) => setCustomerFilter(e.target.value)}>
               <option value="All">All Customers</option>
-              {customers.map((c) => (
-                <option key={c._id} value={c._id}>
-                  {c.name} {c.creditStatus ? `— ${c.creditStatus}` : ""}
-                </option>
-              ))}
+              {customers.map((c) => <option key={c._id} value={c._id}>{c.name}{c.creditStatus ? ` — ${c.creditStatus}` : ""}</option>)}
             </select>
-
-            <select
-              className="custom-select"
-              value={branchFilter}
-              onChange={(e) => setBranchFilter(e.target.value)}
-            >
+            <select className="custom-select" value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}>
               <option value="All">All Branches</option>
-              {branches.map((b) => (
-                <option key={b._id} value={b._id}>
-                  {b.name}
-                </option>
-              ))}
+              {branches.map((b) => <option key={b._id} value={b._id}>{b.name}</option>)}
             </select>
-
-            <select
-              className="custom-select"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
+            <select className="custom-select" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="All">All Return Statuses</option>
               <option value="waiting_for_approval">Waiting for Approval</option>
               <option value="approved">Approved</option>
               <option value="cancelled">Cancelled</option>
             </select>
-
             {isAdminOrDataEntry && (
-              <select
-                className="custom-select"
-                value={salesRepFilter}
-                onChange={(e) => setSalesRepFilter(e.target.value)}
-              >
+              <select className="custom-select" value={salesRepFilter} onChange={(e) => setSalesRepFilter(e.target.value)}>
                 <option value="All">All Sales Reps</option>
                 {salesReps.map((sr) => (
                   <option key={sr._id} value={sr._id}>
-                    {sr.repCode ? `${sr.repCode} — ` : ""}
-                    {sr.name || sr.fullName || sr.email || "Sales Rep"}
+                    {sr.repCode ? `${sr.repCode} — ` : ""}{sr.name || sr.fullName || sr.email || "Sales Rep"}
                   </option>
                 ))}
               </select>
             )}
-
-            <button
-              type="button"
-              className="btn-soft"
-              onClick={resetFilters}
-              title="Reset all filters"
-            >
-              <i className="bi bi-arrow-counterclockwise me-1" />
-              Reset
+            <button type="button" className="btn-soft" onClick={resetFilters} title="Reset all filters">
+              <i className="bi bi-arrow-counterclockwise me-1" />Reset
             </button>
           </div>
         </div>
-
-        <button className="action-btn" onClick={openCreateModal}>
-          + Create Sales Return
-        </button>
+        <button className="action-btn" onClick={openCreateModal}>+ Create Sales Return</button>
       </div>
 
-      {/* Table area */}
+      {/* Table */}
       <div className="table-container p-3">
         <div className="table-top-note">
           <span className="result-badge">
-            <i className="bi bi-arrow-return-left" />
-            {visibleCountLabel}
+            <i className="bi bi-arrow-return-left" />{visibleCountLabel}
           </span>
-
-          {loading && (
-            <span className="small text-muted">
-              <i className="bi bi-arrow-repeat me-1" />
-              Loading...
-            </span>
-          )}
+          {loading && <span className="small text-muted"><i className="bi bi-arrow-repeat me-1" />Loading...</span>}
         </div>
 
         <div className="return-table-wrap">
           <table className="modern-table">
             <thead>
               <tr>
-                <th>
-                  <button className="sort-btn" onClick={() => handleSort("returnNo")}>
-                    Return <i className={`bi ${getSortIcon("returnNo")}`} />
-                  </button>
-                </th>
-                <th>
-                  <button className="sort-btn" onClick={() => handleSort("customer")}>
-                    Customer <i className={`bi ${getSortIcon("customer")}`} />
-                  </button>
-                </th>
-                {isAdminOrDataEntry && (
-                  <th>
-                    <button className="sort-btn" onClick={() => handleSort("salesRep")}>
-                      Sales Rep <i className={`bi ${getSortIcon("salesRep")}`} />
-                    </button>
-                  </th>
-                )}
-                <th>
-                  <button className="sort-btn" onClick={() => handleSort("invoiceNo")}>
-                    Invoice <i className={`bi ${getSortIcon("invoiceNo")}`} />
-                  </button>
-                </th>
-                <th>
-                  <button className="sort-btn" onClick={() => handleSort("amount")}>
-                    Amount <i className={`bi ${getSortIcon("amount")}`} />
-                  </button>
-                </th>
-                <th>
-                  <button className="sort-btn" onClick={() => handleSort("status")}>
-                    Status <i className={`bi ${getSortIcon("status")}`} />
-                  </button>
-                </th>
+                <th><button className="sort-btn" onClick={() => handleSort("returnNo")}>Return <i className={`bi ${getSortIcon("returnNo")}`} /></button></th>
+                <th><button className="sort-btn" onClick={() => handleSort("customer")}>Customer <i className={`bi ${getSortIcon("customer")}`} /></button></th>
+                {isAdminOrDataEntry && <th><button className="sort-btn" onClick={() => handleSort("salesRep")}>Sales Rep <i className={`bi ${getSortIcon("salesRep")}`} /></button></th>}
+                <th><button className="sort-btn" onClick={() => handleSort("invoiceNo")}>Invoice <i className={`bi ${getSortIcon("invoiceNo")}`} /></button></th>
+                <th><button className="sort-btn" onClick={() => handleSort("amount")}>Amount <i className={`bi ${getSortIcon("amount")}`} /></button></th>
+                <th><button className="sort-btn" onClick={() => handleSort("status")}>Status <i className={`bi ${getSortIcon("status")}`} /></button></th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -647,10 +385,12 @@ const SalesReturnDashboard = () => {
               {filteredReturns.length ? (
                 filteredReturns.map((ret) => {
                   const statusMeta = getStatusMeta(ret.status);
-                  const total = getReturnTotal(ret);
+                  const invoiceId  = ret.originalInvoice?._id || ret.originalInvoice;
+                  const invoiceNo  = ret.originalInvoice?.invoiceNo;
 
                   return (
                     <tr key={ret._id} className="return-row">
+
                       <td className="col-return-main">
                         <div className="return-no">{ret.returnNo || "-"}</div>
                         <div className="return-sub">{formatDate(ret.returnDate)}</div>
@@ -658,62 +398,48 @@ const SalesReturnDashboard = () => {
 
                       <td>{ret.customer?.name || "-"}</td>
 
-                      {isAdminOrDataEntry && (
-                        <td>{getReturnSalesRepName(ret)}</td>
-                      )}
+                      {isAdminOrDataEntry && <td>{getReturnSalesRepName(ret)}</td>}
 
+                      {/* ── Invoice column — clickable ── */}
                       <td>
-                        <div className="fw-semibold">
-                          {ret.originalInvoice?.invoiceNo || "-"}
-                        </div>
-                        <div className="amount-sub invoice">Original Invoice</div>
+                        {invoiceNo && invoiceId ? (
+                          <button
+                            className="invoice-link-btn"
+                            onClick={() => openInvoiceView(invoiceId)}
+                            title="View original invoice"
+                          >
+                            <i className="bi bi-receipt me-1" style={{ fontSize: "11px" }} />
+                            {invoiceNo}
+                          </button>
+                        ) : (
+                          <span className="text-muted">-</span>
+                        )}
+                        <div className="amount-sub" style={{ color: "#6b7280" }}>Original Invoice</div>
                       </td>
 
-                      <td>{formatCurrency(total)}</td>
+                      <td>{formatCurrency(getReturnTotal(ret))}</td>
 
                       <td>
                         <span className={`status-pill-ux ${statusMeta.className}`}>
-                          <i className={`bi ${statusMeta.icon}`} />
-                          {statusMeta.label}
+                          <i className={`bi ${statusMeta.icon}`} />{statusMeta.label}
                         </span>
                       </td>
 
                       <td>
                         <div className="d-flex align-items-center gap-1">
-                          {/* View — always visible */}
-                          <button
-                            className="icon-btn-ux view"
-                            onClick={() => handleView(ret)}
-                            title="View Sales Return"
-                          >
+                          <button className="icon-btn-ux view" onClick={() => handleView(ret)} title="View Sales Return">
                             <i className="bi bi-eye" />
                           </button>
-
-                          {/* Edit / Delete / Approve — only while waiting for approval */}
                           {ret.status === "waiting_for_approval" && (
                             <>
-                              <button
-                                className="icon-btn-ux edit"
-                                onClick={() => handleEdit(ret)}
-                                title="Edit Sales Return"
-                              >
+                              <button className="icon-btn-ux edit" onClick={() => handleEdit(ret)} title="Edit Sales Return">
                                 <i className="bi bi-pencil-square" />
                               </button>
-
-                              <button
-                                className="icon-btn-ux delete"
-                                onClick={() => handleDelete(ret)}
-                                title="Delete Sales Return"
-                              >
+                              <button className="icon-btn-ux delete" onClick={() => handleDelete(ret)} title="Delete Sales Return">
                                 <i className="bi bi-trash" />
                               </button>
-
                               {isAdminOrDataEntry && (
-                                <button
-                                  className="icon-btn-ux approve"
-                                  onClick={() => handleApprove(ret)}
-                                  title="Approve Sales Return"
-                                >
+                                <button className="icon-btn-ux approve" onClick={() => handleApprove(ret)} title="Approve Sales Return">
                                   <i className="bi bi-check-circle" />
                                 </button>
                               )}
@@ -721,6 +447,7 @@ const SalesReturnDashboard = () => {
                           )}
                         </div>
                       </td>
+
                     </tr>
                   );
                 })
@@ -736,7 +463,6 @@ const SalesReturnDashboard = () => {
         </div>
       </div>
 
-      {/* Return modal — handles create / view / edit */}
       {modalOpen && (
         <SalesReturnCreateModal
           show={modalOpen}
@@ -744,11 +470,10 @@ const SalesReturnDashboard = () => {
           selectedReturn={selectedReturn}
           onClose={closeModal}
           onSuccess={handleSuccess}
-          onViewInvoice={handleViewInvoiceFromReturnModal}
+          onViewInvoice={openInvoiceView}
         />
       )}
 
-      {/* Invoice view modal */}
       {invoiceViewOpen && (
         <SalesInvoiceViewModal
           show={invoiceViewOpen}
@@ -763,3 +488,4 @@ const SalesReturnDashboard = () => {
 };
 
 export default SalesReturnDashboard;
+

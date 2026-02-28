@@ -1,229 +1,247 @@
 /**
  * Period Rollover Service
- * File: server/src/services/period/periodRollover.service.js
+ * server/src/services/period/periodRollover.service.js
  *
- * Atomically archives all current-period data and starts a fresh period.
- * Uses MongoDB ACID transactions — requires Atlas M10 replica set.
+ * On-demand period closing for Agelka Agencies warehouse ERP.
+ * - Triggered manually by admin when business decides to close a period
+ * - Idempotent — safe to re-run if it fails midway
+ * - Data is NEVER deleted — only moved to history collections
+ * - SalesRepStock is reset to zero after archiving (fresh stock for new period)
+ * - Works on MongoDB Atlas Flex tier (no transactions needed)
  */
 
-const mongoose = require('mongoose');
+// ── Current period models ─────────────────────────────────────────
+const SalesInvoice       = require('../../models/sale/SalesInvoice.model');
+const SalesReturn        = require('../../models/sale/SalesReturn.model');
+const StockAdjustment    = require('../../models/inventory/StockAdjustment.model');
+const SalesRepStock      = require('../../models/inventory/salesRepStock.model');
+const GRN                = require('../../models/purchases/grn.model');
+const SalesLedger        = require('../../models/ledger/SalesLedger.model');
+const PurchaseLedger     = require('../../models/ledger/PurchaseLedger.model');
+const StockLedger        = require('../../models/ledger/StockLedger.model');
+const CustomerPayment    = require('../../models/finance/customerPayment.model');
 
-// Current period models
-const SalesInvoice = require('../../models/sale/SalesInvoice.model');
-const SalesReturn = require('../../models/sale/SalesReturn.model');
-const GRN = require('../../models/purchases/grn.model');
-const SalesLedger = require('../../models/ledger/SalesLedger.model');
-const PurchaseLedger = require('../../models/ledger/PurchaseLedger.model');
-const StockLedger = require('../../models/ledger/StockLedger.model');
-const Item = require('../../models/inventory/item.model');
-const StockAdjustment = require('../../models/inventory/StockAdjustment.model');
-const CustomerPayment = require('../../models/finance/customerPayment.model');
+// ── History models ────────────────────────────────────────────────
+const SalesInvoiceHistory       = require('../../models/history/SalesInvoiceHistory.model');
+const SalesReturnHistory        = require('../../models/history/SalesReturnHistory.model');
+const StockAdjustmentHistory    = require('../../models/history/StockAdjustmentHistory.model');
+const SalesRepStockHistory      = require('../../models/history/SalesRepStockHistory.model');
+const GRNHistory                = require('../../models/history/GRNHistory.model');
+const SalesLedgerHistory        = require('../../models/history/SalesLedgerHistory.model');
+const PurchaseLedgerHistory     = require('../../models/history/PurchaseLedgerHistory.model');
+const StockLedgerHistory        = require('../../models/history/StockLedgerHistory.model');
+const CustomerPaymentHistory    = require('../../models/history/CustomerPaymentHistory.model');
 
-// ── History Models (create these new files — see bottom of this file) ──
-const SalesInvoiceHistory = require('../../models/history/SalesInvoiceHistory.model');
-const SalesReturnHistory = require('../../models/history/SalesReturnHistory.model');
-const GRNHistory = require('../../models/history/GRNHistory.model');
-const SalesLedgerHistory = require('../../models/history/SalesLedgerHistory.model');
-const PurchaseLedgerHistory = require('../../models/history/PurchaseLedgerHistory.model');
-const StockLedgerHistory = require('../../models/history/StockLedgerHistory.model');
-const StockAdjustmentHistory = require('../../models/history/StockAdjustmentHistory.model');
-const CustomerPaymentHistory = require('../../models/history/CustomerPaymentHistory.model');
-const ItemSnapshot = require('../../models/history/ItemSnapshot.model');
+// ── Period tracker ────────────────────────────────────────────────
 const Period = require('../../models/period/Period.model');
 
 /**
- * Performs the monthly period rollover atomically.
- * If ANY step fails, ALL changes are rolled back — data stays safe.
- *
- * @param {string} periodLabel - e.g. "2025-01" (YYYY-MM)
- * @param {string} performedBy - user ID who triggered the rollover
+ * Archive a single collection to its history collection.
+ * Idempotent — skips docs already archived for this period.
  */
-const performMonthlyRollover = async (periodLabel, performedBy) => {
-  // Validate period label format
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodLabel)) {
-    throw new Error('Invalid periodLabel format. Use YYYY-MM (e.g. 2025-01)');
+const archiveCollection = async (SourceModel, HistoryModel, periodLabel, collectionName) => {
+  const docs = await SourceModel.find({}).lean();
+
+  if (!docs.length) {
+    console.log(`  ⏭️  ${collectionName}: nothing to archive`);
+    return 0;
   }
 
-  // Check this period hasn't already been closed
-  const existing = await Period.findOne({ label: periodLabel });
+  // Check which are already archived (re-run protection)
+  const existingOriginalIds = await HistoryModel
+    .find({ period: periodLabel })
+    .distinct('originalId');
+
+  const existingSet = new Set(existingOriginalIds.map(id => id.toString()));
+  const toArchive = docs.filter(doc => !existingSet.has(doc._id.toString()));
+
+  if (!toArchive.length) {
+    console.log(`  ✅ ${collectionName}: already archived (${docs.length} docs)`);
+    return docs.length;
+  }
+
+  const historyDocs = toArchive.map(({ _id, ...doc }) => ({
+    ...doc,
+    originalId: _id,
+    period: periodLabel,
+    archivedAt: new Date(),
+  }));
+
+  await HistoryModel.insertMany(historyDocs, { ordered: false });
+  console.log(`  ✅ ${collectionName}: archived ${toArchive.length} docs`);
+  return docs.length;
+};
+
+/**
+ * Clear a collection ONLY after confirming all docs are archived.
+ * Safety gate — data is never lost.
+ */
+const safelyClearCollection = async (SourceModel, HistoryModel, periodLabel, collectionName) => {
+  const currentCount  = await SourceModel.countDocuments();
+  const archivedCount = await HistoryModel.countDocuments({ period: periodLabel });
+
+  if (currentCount > archivedCount) {
+    throw new Error(
+      `Safety check failed for ${collectionName}: ` +
+      `${currentCount} current docs but only ${archivedCount} archived. ` +
+      `Re-run rollover to fix.`
+    );
+  }
+
+  await SourceModel.deleteMany({});
+  console.log(`  🗑️  ${collectionName}: cleared ${currentCount} docs`);
+};
+
+/**
+ * Main rollover function.
+ * Called by admin when business decides to close a period.
+ *
+ * @param {string} periodLabel - e.g. "2025-Q1", "JAN-2025", "PERIOD-1"
+ * @param {string} performedBy - user _id of admin triggering rollover
+ */
+const performRollover = async (periodLabel, performedBy) => {
+  if (!periodLabel || !periodLabel.trim()) {
+    throw new Error('periodLabel is required (e.g. "2025-Q1" or "JAN-2025")');
+  }
+
+  const label = periodLabel.trim().toUpperCase();
+
+  // Block re-closing a completed period
+  const existing = await Period.findOne({ label, status: 'completed' });
   if (existing) {
-    throw new Error(`Period ${periodLabel} has already been closed`);
+    throw new Error(`Period "${label}" was already closed on ${existing.closedAt}`);
   }
 
-  const session = await mongoose.startSession();
+  // Resume or create rollover job
+  let job = await Period.findOne({ label, status: { $in: ['started', 'archiving', 'clearing'] } });
+
+  if (job) {
+    console.log(`🔄 Resuming rollover for "${label}" from checkpoint: ${job.checkpoint}`);
+  } else {
+    job = await Period.create({
+      label,
+      status: 'started',
+      checkpoint: 'none',
+      startedAt: new Date(),
+      startedBy: performedBy,
+      summary: {},
+    });
+    console.log(`🚀 Starting rollover for period "${label}"`);
+  }
 
   try {
-    await session.withTransaction(async () => {
+    // ── Phase 1: Archive all collections ─────────────────────────
+    job.status = 'archiving';
+    await job.save();
+    console.log('\n📦 Archiving collections...');
 
-      const archivedAt = new Date();
+    const summary = {};
+    summary.salesInvoices     = await archiveCollection(SalesInvoice,    SalesInvoiceHistory,    label, 'Sales Invoices');
+    summary.salesReturns      = await archiveCollection(SalesReturn,      SalesReturnHistory,     label, 'Sales Returns');
+    summary.stockAdjustments  = await archiveCollection(StockAdjustment,  StockAdjustmentHistory, label, 'Stock Adjustments');
+    summary.salesRepStocks    = await archiveCollection(SalesRepStock,    SalesRepStockHistory,   label, 'SalesRep Stocks');
+    summary.grns              = await archiveCollection(GRN,              GRNHistory,             label, 'GRNs');
+    summary.salesLedger       = await archiveCollection(SalesLedger,      SalesLedgerHistory,     label, 'Sales Ledger');
+    summary.purchaseLedger    = await archiveCollection(PurchaseLedger,   PurchaseLedgerHistory,  label, 'Purchase Ledger');
+    summary.stockLedger       = await archiveCollection(StockLedger,      StockLedgerHistory,     label, 'Stock Ledger');
+    summary.customerPayments  = await archiveCollection(CustomerPayment,  CustomerPaymentHistory, label, 'Customer Payments');
 
-      // ── Step 1: Fetch all current data ──────────────────────────
-      const [
-        invoices, returns, grns,
-        salesLedger, purchaseLedger, stockLedger,
-        adjustments, payments, items
-      ] = await Promise.all([
-        SalesInvoice.find({}).session(session).lean(),
-        SalesReturn.find({}).session(session).lean(),
-        GRN.find({}).session(session).lean(),
-        SalesLedger.find({}).session(session).lean(),
-        PurchaseLedger.find({}).session(session).lean(),
-        StockLedger.find({}).session(session).lean(),
-        StockAdjustment.find({}).session(session).lean(),
-        CustomerPayment.find({}).session(session).lean(),
-        Item.find({}).session(session).lean(),
-      ]);
+    job.checkpoint = 'archived';
+    job.summary = summary;
+    await job.save();
 
-      // Helper: strip _id and add period metadata
-      const withPeriod = (docs) =>
-        docs.map(({ _id, ...doc }) => ({
-          ...doc,
-          originalId: _id,
-          period: periodLabel,
-          archivedAt,
-        }));
+    // ── Phase 2: Clear current collections (safety-gated) ────────
+    job.status = 'clearing';
+    await job.save();
+    console.log('\n🗑️  Clearing current period data...');
 
-      // ── Step 2: Archive everything to history collections ────────
-      const archiveTasks = [];
+    await safelyClearCollection(SalesInvoice,   SalesInvoiceHistory,    label, 'Sales Invoices');
+    await safelyClearCollection(SalesReturn,     SalesReturnHistory,     label, 'Sales Returns');
+    await safelyClearCollection(StockAdjustment, StockAdjustmentHistory, label, 'Stock Adjustments');
+    await safelyClearCollection(GRN,             GRNHistory,             label, 'GRNs');
+    await safelyClearCollection(SalesLedger,     SalesLedgerHistory,     label, 'Sales Ledger');
+    await safelyClearCollection(PurchaseLedger,  PurchaseLedgerHistory,  label, 'Purchase Ledger');
+    await safelyClearCollection(StockLedger,     StockLedgerHistory,     label, 'Stock Ledger');
+    await safelyClearCollection(CustomerPayment, CustomerPaymentHistory, label, 'Customer Payments');
 
-      if (invoices.length) archiveTasks.push(SalesInvoiceHistory.insertMany(withPeriod(invoices), { session }));
-      if (returns.length) archiveTasks.push(SalesReturnHistory.insertMany(withPeriod(returns), { session }));
-      if (grns.length) archiveTasks.push(GRNHistory.insertMany(withPeriod(grns), { session }));
-      if (salesLedger.length) archiveTasks.push(SalesLedgerHistory.insertMany(withPeriod(salesLedger), { session }));
-      if (purchaseLedger.length) archiveTasks.push(PurchaseLedgerHistory.insertMany(withPeriod(purchaseLedger), { session }));
-      if (stockLedger.length) archiveTasks.push(StockLedgerHistory.insertMany(withPeriod(stockLedger), { session }));
-      if (adjustments.length) archiveTasks.push(StockAdjustmentHistory.insertMany(withPeriod(adjustments), { session }));
-      if (payments.length) archiveTasks.push(CustomerPaymentHistory.insertMany(withPeriod(payments), { session }));
+    // SalesRepStock — clear and reset to zero (fresh stock for new period)
+    await SalesRepStock.updateMany({}, {
+      $set: { qtyOnHandPrimary: 0, qtyOnHandBase: 0, stockValueBase: 0, stockValuePrimary: 0 }
+    });
+    console.log(`  🔄 SalesRep Stocks: reset to zero for new period`);
 
-      // Snapshot item stock levels at period close
-      if (items.length) {
-        archiveTasks.push(ItemSnapshot.insertMany(
-          items.map(({ _id, ...item }) => ({
-            ...item,
-            originalId: _id,
-            period: periodLabel,
-            snapshotType: 'closing',
-            archivedAt,
-          })),
-          { session }
-        ));
-      }
+    // ── Phase 3: Mark period completed ───────────────────────────
+    job.status    = 'completed';
+    job.checkpoint = 'done';
+    job.closedAt  = new Date();
+    job.closedBy  = performedBy;
+    await job.save();
 
-      await Promise.all(archiveTasks);
-
-      // ── Step 3: Clear transactional data ────────────────────────
-      await Promise.all([
-        SalesInvoice.deleteMany({}).session(session),
-        SalesReturn.deleteMany({}).session(session),
-        GRN.deleteMany({}).session(session),
-        SalesLedger.deleteMany({}).session(session),
-        PurchaseLedger.deleteMany({}).session(session),
-        StockLedger.deleteMany({}).session(session),
-        StockAdjustment.deleteMany({}).session(session),
-        CustomerPayment.deleteMany({}).session(session),
-        // NOTE: Items are NOT deleted — stock carries forward
-      ]);
-
-      // ── Step 4: Log the closed period ───────────────────────────
-      await Period.create([{
-        label: periodLabel,
-        closedAt: archivedAt,
-        closedBy: performedBy,
-        status: 'closed',
-        summary: {
-          invoices: invoices.length,
-          salesReturns: returns.length,
-          grns: grns.length,
-          salesLedgerEntries: salesLedger.length,
-          purchaseLedgerEntries: purchaseLedger.length,
-          stockLedgerEntries: stockLedger.length,
-          adjustments: adjustments.length,
-          payments: payments.length,
-          itemsCarriedForward: items.length,
-        },
-      }], { session });
-
-    }); // ← if anything above throws, entire transaction is rolled back
+    console.log(`\n🎉 Period "${label}" closed successfully!`);
 
     return {
       success: true,
-      period: periodLabel,
-      message: `Period ${periodLabel} closed and archived successfully`,
+      period: label,
+      summary,
+      message: `Period "${label}" closed and archived successfully. Fresh period started.`,
     };
 
   } catch (error) {
-    throw new Error(`Rollover failed — no data was changed: ${error.message}`);
-  } finally {
-    session.endSession();
+    job.status        = 'failed';
+    job.failedAt      = new Date();
+    job.failureReason = error.message;
+    await job.save();
+
+    console.error(`\n❌ Rollover failed: ${error.message}`);
+    console.error('💡 Re-run the rollover to resume. No data was deleted.');
+
+    throw new Error(`Rollover failed: ${error.message}. Re-run to resume safely.`);
   }
 };
 
-/**
- * Get list of all closed periods
- */
+/** Get all successfully closed periods */
 const getClosedPeriods = async () => {
-  return await Period.find({ status: 'closed' })
-    .sort({ label: -1 })
-    .select('label closedAt closedBy summary');
+  return await Period.find({ status: 'completed' })
+    .sort({ closedAt: -1 })
+    .select('label closedAt closedBy summary startedAt');
+};
+
+/** Get active or failed rollover job status */
+const getRolloverStatus = async () => {
+  return await Period.findOne({
+    status: { $in: ['started', 'archiving', 'clearing', 'failed'] }
+  }).sort({ startedAt: -1 }) || null;
 };
 
 /**
- * Query historical data for a specific period
- * @param {string} model - 'invoices' | 'grns' | 'salesLedger' | etc.
- * @param {string} period - 'current' | 'YYYY-MM'
+ * Query historical data for a closed period
+ * @param {string} model - see modelMap keys below
+ * @param {string} period - period label e.g. "2025-Q1"
  */
 const getHistoricalData = async (model, period) => {
   const modelMap = {
-    invoices: { current: SalesInvoice, history: SalesInvoiceHistory },
-    returns: { current: SalesReturn, history: SalesReturnHistory },
-    grns: { current: GRN, history: GRNHistory },
-    salesLedger: { current: SalesLedger, history: SalesLedgerHistory },
-    purchaseLedger: { current: PurchaseLedger, history: PurchaseLedgerHistory },
-    stockLedger: { current: StockLedger, history: StockLedgerHistory },
-    payments: { current: CustomerPayment, history: CustomerPaymentHistory },
+    invoices:       SalesInvoiceHistory,
+    returns:        SalesReturnHistory,
+    adjustments:    StockAdjustmentHistory,
+    repStocks:      SalesRepStockHistory,
+    grns:           GRNHistory,
+    salesLedger:    SalesLedgerHistory,
+    purchaseLedger: PurchaseLedgerHistory,
+    stockLedger:    StockLedgerHistory,
+    payments:       CustomerPaymentHistory,
   };
 
-  const target = modelMap[model];
-  if (!target) throw new Error(`Unknown model: ${model}`);
-
-  if (period === 'current') {
-    return await target.current.find({});
+  const HistoryModel = modelMap[model];
+  if (!HistoryModel) {
+    throw new Error(`Unknown model: "${model}". Valid: ${Object.keys(modelMap).join(', ')}`);
   }
-  return await target.history.find({ period });
+
+  return await HistoryModel.find({ period }).sort({ archivedAt: -1 });
 };
 
 module.exports = {
-  performMonthlyRollover,
+  performRollover,
   getClosedPeriods,
+  getRolloverStatus,
   getHistoricalData,
 };
-
-
-/* ═══════════════════════════════════════════════════════════════════
-   HISTORY MODEL TEMPLATE
-   Create one file per model in server/src/models/history/
-   Example: server/src/models/history/SalesInvoiceHistory.model.js
-   ═══════════════════════════════════════════════════════════════════
-
-const mongoose = require('mongoose');
-
-const SalesInvoiceHistorySchema = new mongoose.Schema(
-  {
-    // Copy all fields from your SalesInvoice.model.js here
-    // Then add these period tracking fields:
-    originalId: { type: mongoose.Schema.Types.ObjectId },
-    period: { type: String, required: true, index: true },  // e.g. "2025-01"
-    archivedAt: { type: Date, required: true },
-  },
-  {
-    timestamps: false,
-    collection: 'sales_invoices_history',  // separate collection
-  }
-);
-
-// Index for fast period queries
-SalesInvoiceHistorySchema.index({ period: 1, archivedAt: -1 });
-
-module.exports = mongoose.model('SalesInvoiceHistory', SalesInvoiceHistorySchema);
-
-*/

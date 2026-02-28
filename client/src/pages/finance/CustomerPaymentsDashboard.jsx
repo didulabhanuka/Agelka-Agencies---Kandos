@@ -592,6 +592,18 @@ const CustomerPaymentsDashboard = () => {
             background: #fef3f2;
           }
 
+          .icon-btn-ux.approve:hover {
+            border-color: #abefc6;
+            background: #f6fef9;
+            color: #027a48;
+          }
+
+          .icon-btn-ux.edit:hover {
+            color: #7c3aed;
+            border-color: #ddd6fe;
+            background: #f5f3ff;
+          }
+
           .pay-no {
             font-weight: 700;
             color: #111827;

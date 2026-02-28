@@ -131,10 +131,10 @@ export const navItems = [
     icon: 'bi bi-people-fill',
     rolesAllowed: ["Admin", "DataEntry", "SalesRep"],
     subtabs: [
-      { key: 'add-representative', label: 'Representatives', rolesAllowed: ["Admin", "DataEntry", "SalesRep"], component: SaleRepsDashboard },
+      { key: 'add-representative', label: 'Representatives', rolesAllowed: ["Admin", "DataEntry"], component: SaleRepsDashboard },
       { key: 'add-customer', label: 'Customers', rolesAllowed: ["Admin", "DataEntry", "SalesRep"], component: CustomersDashboard },
       { key: 'add-supplier', label: 'Suppliers', rolesAllowed: ["Admin", "DataEntry", "SalesRep"], component: SuppliersDashboard },
-      { key: 'add-user', label: 'Users', rolesAllowed: ["Admin", "DataEntry", "SalesRep"], component: UserDashboard },
+      { key: 'add-user', label: 'Users', rolesAllowed: ["Admin", "DataEntry"], component: UserDashboard },
     ],
   },
   {
@@ -142,7 +142,7 @@ export const navItems = [
     key: 'inventory-settings',
     label: 'Inventory Settings',
     icon: 'bi bi-toggles',
-    rolesAllowed: ["Admin", "DataEntry", "SalesRep"],
+    rolesAllowed: ["Admin", "DataEntry"],
     subtabs: [
       { key: 'branches', label: 'Branches', rolesAllowed: ["Admin", "DataEntry", "SalesRep"], component: BranchesDashboard },
       { key: 'brands', label: 'Brands', rolesAllowed: ["Admin", "DataEntry", "SalesRep"], component: BrandsDashboard },

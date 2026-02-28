@@ -7,11 +7,14 @@ import {
   listSalesInvoices,
   getSalesInvoice,
   approveSalesInvoice,
-  deleteSalesInvoice, 
+  deleteSalesInvoice,
   getSalesReturn,
 } from "../../../lib/api/sales.api";
 
-import { getPaymentsForInvoice } from "../../../lib/api/finance.api";
+import {
+  getPaymentsForInvoice,
+  getCustomerPayment,
+} from "../../../lib/api/finance.api";
 
 import { listBranches } from "../../../lib/api/settings.api";
 import { getCustomers, getSalesReps } from "../../../lib/api/users.api";
@@ -59,7 +62,6 @@ const SalesInvoiceDashboard = () => {
   const [paymentStatusFilter, setPaymentStatusFilter] = useState("All");
   const [salesRepFilter, setSalesRepFilter] = useState("All");
 
-  // ✅ Column sorting (GRN style)
   const [sortConfig, setSortConfig] = useState({
     key: "invoiceDate",
     direction: "desc",
@@ -78,7 +80,7 @@ const SalesInvoiceDashboard = () => {
   const [returnViewOpen, setReturnViewOpen] = useState(false);
   const [returnForView, setReturnForView] = useState(null);
 
-  // Payment view modal
+  // Payment view modal — always opens in "view" mode from here
   const [paymentViewOpen, setPaymentViewOpen] = useState(false);
   const [paymentForView, setPaymentForView] = useState(null);
 
@@ -110,7 +112,6 @@ const SalesInvoiceDashboard = () => {
       setCustomers(custRes || []);
       setSalesReps(salesRepRes?.data || salesRepRes || []);
 
-      // Reset sales rep filter if hidden by role
       if (!isAdminOrDataEntry) setSalesRepFilter("All");
     } catch (err) {
       console.error("Failed loading invoices or master data:", err);
@@ -142,13 +143,11 @@ const SalesInvoiceDashboard = () => {
 
   const getCustomerCreditClass = (creditStatus) => {
     const value = String(creditStatus || "").toLowerCase();
-
     if (value.includes("cash")) return "mini-pill neutral";
     if (value.includes("credit")) return "mini-pill info";
     return "mini-pill neutral";
   };
 
-  // Invoice status visuals
   const getStatusMeta = (status) => {
     switch (status) {
       case "approved":
@@ -167,7 +166,6 @@ const SalesInvoiceDashboard = () => {
     }
   };
 
-  // Payment status visuals
   const getPaymentStatusMeta = (status) => {
     switch (status) {
       case "paid":
@@ -187,14 +185,11 @@ const SalesInvoiceDashboard = () => {
     const paid = Number(inv.paidAmount || 0);
     const balance = Math.max(0, netTotal - paid);
     const paidPct = netTotal > 0 ? Math.min(100, (paid / netTotal) * 100) : 0;
-
     return { originalTotal, returned, netTotal, paid, balance, paidPct };
   };
 
-  // ✅ sort helpers (GRN-like)
   const getSortValue = (inv, key) => {
     const totals = getInvoiceTotals(inv);
-
     switch (key) {
       case "invoiceNo":
         return String(inv.invoiceNo || "").toLowerCase();
@@ -222,15 +217,9 @@ const SalesInvoiceDashboard = () => {
   const handleSort = (key) => {
     setSortConfig((prev) => {
       if (prev.key === key) {
-        return {
-          key,
-          direction: prev.direction === "asc" ? "desc" : "asc",
-        };
+        return { key, direction: prev.direction === "asc" ? "desc" : "asc" };
       }
-      return {
-        key,
-        direction: "asc",
-      };
+      return { key, direction: "asc" };
     });
   };
 
@@ -239,12 +228,10 @@ const SalesInvoiceDashboard = () => {
     return sortConfig.direction === "asc" ? "bi-sort-down" : "bi-sort-up";
   };
 
-  // ✅ Filter + sort via useMemo (instead of applyFilters + sort dropdown)
   const filteredInvoices = useMemo(() => {
     let data = [...invoices];
     const s = search.trim().toLowerCase();
 
-    // SalesRep only sees own invoices
     if (isSalesRep && loggedInSalesRepId) {
       data = data.filter((inv) => {
         const invSalesRepId = inv.salesRep?._id || inv.salesRep || inv.salesRepId || "";
@@ -252,7 +239,6 @@ const SalesInvoiceDashboard = () => {
       });
     }
 
-    // Search
     if (s) {
       data = data.filter((inv) => {
         const invoiceNo = inv.invoiceNo?.toLowerCase() || "";
@@ -261,7 +247,6 @@ const SalesInvoiceDashboard = () => {
         const branchName = inv.branch?.name?.toLowerCase() || "";
         const salesRepName = inv.salesRep?.name?.toLowerCase() || "";
         const salesRepCode = inv.salesRep?.repCode?.toLowerCase() || "";
-
         return (
           invoiceNo.includes(s) ||
           customerName.includes(s) ||
@@ -272,27 +257,18 @@ const SalesInvoiceDashboard = () => {
       });
     }
 
-    // Customer filter
     if (customerFilter !== "All") {
       data = data.filter((inv) => inv.customer?._id === customerFilter);
     }
-
-    // Branch filter
     if (branchFilter !== "All") {
       data = data.filter((inv) => inv.branch?._id === branchFilter);
     }
-
-    // Invoice status filter
     if (statusFilter !== "All") {
       data = data.filter((inv) => inv.status === statusFilter);
     }
-
-    // Payment status filter
     if (paymentStatusFilter !== "All") {
       data = data.filter((inv) => (inv.paymentStatus || "unpaid") === paymentStatusFilter);
     }
-
-    // SalesRep filter for admin/dataentry
     if (isAdminOrDataEntry && salesRepFilter !== "All") {
       data = data.filter((inv) => {
         const invSalesRepId = inv.salesRep?._id || inv.salesRep || inv.salesRepId || "";
@@ -300,11 +276,9 @@ const SalesInvoiceDashboard = () => {
       });
     }
 
-    // Sort
     data.sort((a, b) => {
       const aVal = getSortValue(a, sortConfig.key);
       const bVal = getSortValue(b, sortConfig.key);
-
       if (aVal < bVal) return sortConfig.direction === "asc" ? -1 : 1;
       if (aVal > bVal) return sortConfig.direction === "asc" ? 1 : -1;
       return 0;
@@ -312,17 +286,9 @@ const SalesInvoiceDashboard = () => {
 
     return data;
   }, [
-    invoices,
-    search,
-    customerFilter,
-    branchFilter,
-    statusFilter,
-    paymentStatusFilter,
-    salesRepFilter,
-    isAdminOrDataEntry,
-    isSalesRep,
-    loggedInSalesRepId,
-    sortConfig,
+    invoices, search, customerFilter, branchFilter, statusFilter,
+    paymentStatusFilter, salesRepFilter, isAdminOrDataEntry,
+    isSalesRep, loggedInSalesRepId, sortConfig,
   ]);
 
   // Actions
@@ -335,12 +301,9 @@ const SalesInvoiceDashboard = () => {
   const handleView = async (inv) => {
     try {
       setLoading(true);
-
       const full = await getSalesInvoice(inv._id);
       const paymentsRes = await getPaymentsForInvoice(inv._id);
-
       full.paymentAllocations = Array.isArray(paymentsRes?.payments) ? paymentsRes.payments : [];
-
       setInvoiceForView(full);
       setInvoiceViewOpen(true);
     } catch (err) {
@@ -366,14 +329,13 @@ const SalesInvoiceDashboard = () => {
     }
   };
 
-    const deleteInvoice = async (inv) => {
+  const deleteInvoice = async (inv) => {
     if (!window.confirm(`Are you sure you want to delete invoice ${inv.invoiceNo}?`)) return;
-
     try {
       setLoading(true);
       const res = await deleteSalesInvoice(inv._id);
       toast.success(res?.message || "Invoice deleted successfully.");
-      await fetchAll();  // Reload the invoices
+      await fetchAll();
     } catch (err) {
       console.error("Failed to delete invoice:", err);
       toast.error(err?.response?.data?.message || "Failed to delete invoice.");
@@ -387,9 +349,7 @@ const SalesInvoiceDashboard = () => {
       toast.info("Only invoices waiting for approval can be approved.");
       return;
     }
-
     if (!window.confirm(`Approve invoice ${inv.invoiceNo}?`)) return;
-
     try {
       setLoading(true);
       const res = await approveSalesInvoice(inv._id);
@@ -405,7 +365,6 @@ const SalesInvoiceDashboard = () => {
 
   const handleViewReturnFromInvoiceModal = async (returnId) => {
     if (!returnId) return;
-
     try {
       setLoading(true);
       const full = await getSalesReturn(returnId);
@@ -419,15 +378,48 @@ const SalesInvoiceDashboard = () => {
     }
   };
 
-  const openPaymentViewer = (paymentObj) => {
-    setPaymentForView(paymentObj);
-    setPaymentViewOpen(true);
+  // ── Payment viewer ─────────────────────────────────────────────────────────
+  // Called from SalesInvoiceViewModal when user clicks a payment link.
+  // The allocation entry passed up may be a thin object like:
+  //   { paymentNo, amount, paymentId: "abc123" | { _id: "abc123", ... } }
+  // We resolve the real payment ID, fetch the full payment, then open in VIEW mode.
+  const handleOpenPaymentFromInvoice = async (allocationOrId) => {
+    if (!allocationOrId) return;
+
+    // Resolve the payment ID — could be a string ID, an allocation object,
+    // or an object whose paymentId field holds the real ID.
+    const paymentId =
+      typeof allocationOrId === "string"
+        ? allocationOrId
+        : allocationOrId?.paymentId?._id ||
+          allocationOrId?.paymentId ||
+          allocationOrId?._id ||
+          null;
+
+    if (!paymentId) {
+      toast.error("Could not resolve payment ID.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const res = await getCustomerPayment(paymentId);
+      const fullPayment = res?.data || res;
+      setPaymentForView(fullPayment);
+      setPaymentViewOpen(true);
+    } catch (err) {
+      console.error("Failed to load payment:", err);
+      toast.error("Failed to load payment details.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const closePaymentViewer = () => {
     setPaymentForView(null);
     setPaymentViewOpen(false);
   };
+  // ──────────────────────────────────────────────────────────────────────────
 
   const resetFilters = () => {
     setSearch("");
@@ -448,7 +440,6 @@ const SalesInvoiceDashboard = () => {
 
   return (
     <div className="container-fluid py-4 px-5">
-      {/* Local dashboard styles */}
       <style>
         {`
           .invoice-table-wrap {
@@ -456,7 +447,6 @@ const SalesInvoiceDashboard = () => {
             overflow: auto;
             border-radius: 14px;
           }
-
           .invoice-table-wrap .modern-table thead th {
             position: sticky;
             top: 0;
@@ -465,252 +455,82 @@ const SalesInvoiceDashboard = () => {
             box-shadow: inset 0 -1px 0 #eef0f3;
             white-space: nowrap;
           }
-
           .invoice-row {
             transition: background-color .15s ease, box-shadow .15s ease;
           }
-
           .invoice-row:hover {
             background: #fafbff;
             box-shadow: inset 3px 0 0 #5c3e94;
           }
-
-          .col-invoice-main {
-            min-width: 170px;
-          }
-
-          .invoice-no {
-            font-weight: 700;
-            color: #111827;
-            letter-spacing: 0.01em;
-          }
-
-          .invoice-sub {
-            font-size: 12px;
-            color: #6b7280;
-            margin-top: 2px;
-          }
-
+          .col-invoice-main { min-width: 170px; }
+          .invoice-no { font-weight: 700; color: #111827; letter-spacing: 0.01em; }
+          .invoice-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
           .mini-pill {
-            display: inline-flex;
-            align-items: center;
-            padding: 2px 8px;
-            border-radius: 999px;
-            font-size: 11px;
-            font-weight: 600;
-            margin-top: 4px;
-            border: 1px solid transparent;
+            display: inline-flex; align-items: center; padding: 2px 8px;
+            border-radius: 999px; font-size: 11px; font-weight: 600;
+            margin-top: 4px; border: 1px solid transparent;
           }
-
-          .mini-pill.neutral {
-            background: #f3f4f6;
-            color: #4b5563;
-            border-color: #e5e7eb;
-          }
-
-          .mini-pill.info {
-            background: #eff6ff;
-            color: #1d4ed8;
-            border-color: #bfdbfe;
-          }
-
+          .mini-pill.neutral { background: #f3f4f6; color: #4b5563; border-color: #e5e7eb; }
+          .mini-pill.info    { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
           .status-pill-ux {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            border-radius: 999px;
-            font-size: 12px;
-            font-weight: 700;
-            padding: 4px 10px;
-            border: 1px solid transparent;
-            white-space: nowrap;
+            display: inline-flex; align-items: center; gap: 6px;
+            border-radius: 999px; font-size: 12px; font-weight: 700;
+            padding: 4px 10px; border: 1px solid transparent; white-space: nowrap;
           }
-
-          .status-pill-ux.pill-success {
-            background: #ecfdf3;
-            color: #027a48;
-            border-color: #abefc6;
-          }
-
-          .status-pill-ux.pill-warning {
-            background: #fffaeb;
-            color: #b54708;
-            border-color: #fedf89;
-          }
-
-          .status-pill-ux.pill-danger {
-            background: #fef3f2;
-            color: #b42318;
-            border-color: #fecdca;
-          }
-
-          .status-pill-ux.pill-muted {
-            background: #f2f4f7;
-            color: #475467;
-            border-color: #e4e7ec;
-          }
-
-          .amount-stack {
-            line-height: 1.25;
-            min-width: 170px;
-          }
-
-          .amount-main {
-            font-weight: 700;
-            color: #111827;
-          }
-
-          .amount-sub {
-            font-size: 12px;
-            color: #6b7280;
-            margin-top: 2px;
-          }
-
-          .amount-sub.return {
-            color: #b42318;
-          }
-
-          .amount-sub.net {
-            color: #027a48;
-            font-weight: 600;
-          }
-
-          .payment-cell {
-            min-width: 210px;
-          }
-
-          .payment-meta {
-            margin-top: 6px;
-            font-size: 12px;
-            color: #6b7280;
-            line-height: 1.25;
-          }
-
+          .status-pill-ux.pill-success { background: #ecfdf3; color: #027a48; border-color: #abefc6; }
+          .status-pill-ux.pill-warning { background: #fffaeb; color: #b54708; border-color: #fedf89; }
+          .status-pill-ux.pill-danger  { background: #fef3f2; color: #b42318; border-color: #fecdca; }
+          .status-pill-ux.pill-muted   { background: #f2f4f7; color: #475467; border-color: #e4e7ec; }
+          .amount-stack { line-height: 1.25; min-width: 170px; }
+          .amount-main  { font-weight: 700; color: #111827; }
+          .amount-sub   { font-size: 12px; color: #6b7280; margin-top: 2px; }
+          .amount-sub.return { color: #b42318; }
+          .amount-sub.net    { color: #027a48; font-weight: 600; }
+          .payment-cell { min-width: 210px; }
+          .payment-meta { margin-top: 6px; font-size: 12px; color: #6b7280; line-height: 1.25; }
           .payment-progress {
-            height: 6px;
-            border-radius: 999px;
-            background: #eef0f3;
-            overflow: hidden;
-            margin-top: 6px;
+            height: 6px; border-radius: 999px; background: #eef0f3;
+            overflow: hidden; margin-top: 6px;
           }
-
           .payment-progress > span {
-            display: block;
-            height: 100%;
-            background: #5c3e94;
-            border-radius: 999px;
+            display: block; height: 100%;
+            background: #5c3e94; border-radius: 999px;
           }
-
           .icon-btn-ux {
-            width: 32px;
-            height: 32px;
-            border-radius: 8px;
-            border: 1px solid #e5e7eb;
-            background: #fff;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
+            width: 32px; height: 32px; border-radius: 8px;
+            border: 1px solid #e5e7eb; background: #fff;
+            display: inline-flex; align-items: center; justify-content: center;
             transition: all .15s ease;
           }
-
-          .icon-btn-ux:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 10px rgba(0,0,0,.08);
+          .icon-btn-ux:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,.08); }
+          .icon-btn-ux.view:hover   { color: #1d4ed8; border-color: #bfdbfe; background: #eff6ff; }
+          .icon-btn-ux.edit:hover   { color: #7c3aed; border-color: #ddd6fe; background: #f5f3ff; }
+          .icon-btn-ux.approve      { border-color: #abefc6; background: #f6fef9; color: #027a48; }
+          .icon-btn-ux.approve:hover{ background: #ecfdf3; box-shadow: 0 4px 12px rgba(2,122,72,.18); }
+          .icon-btn-ux.delete:hover { color: #b42318; border-color: #fecdca; background: #fef3f2; }
+          .filter-grid { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+          .filter-grid .filter-input  { min-width: 220px; }
+          .filter-grid .custom-select { min-width: 160px; }
+          .btn-soft {
+            border: 1px solid #e5e7eb; background: #fff; color: #344054;
+            border-radius: 10px; padding: 8px 12px; font-size: 13px;
+            font-weight: 600; min-height: 42px; white-space: nowrap;
           }
-
-          .icon-btn-ux.view:hover {
-            color: #1d4ed8;
-            border-color: #bfdbfe;
-            background: #eff6ff;
-          }
-
-          .icon-btn-ux.edit:hover {
-            color: #7c3aed;
-            border-color: #ddd6fe;
-            background: #f5f3ff;
-          }
-
-          .icon-btn-ux.approve {
-            border-color: #abefc6;
-            background: #f6fef9;
-            color: #027a48;
-          }
-
-          .icon-btn-ux.approve:hover {
-            background: #ecfdf3;
-            box-shadow: 0 4px 12px rgba(2,122,72,.18);
-          }
-
-          .filter-grid {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            align-items: center;
-          }
-
-          .filter-grid .filter-input {
-            min-width: 220px;
-          }
-
-          .filter-grid .custom-select {
-            min-width: 160px;
-          }
-
-        .btn-soft {
-          border: 1px solid #e5e7eb;
-          background: #fff;
-          color: #344054;
-          border-radius: 10px;
-          padding: 8px 12px;
-          font-size: 13px;
-          font-weight: 600;
-          min-height: 42px;
-          white-space: nowrap;
-        }
-
-        .btn-soft:hover {
-          background: #f9fafb;
-          border-color: #d0d5dd;
-        }
-
+          .btn-soft:hover { background: #f9fafb; border-color: #d0d5dd; }
           .result-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 10px;
-            border-radius: 999px;
-            background: #f8fafc;
-            border: 1px solid #e5e7eb;
-            font-size: 12px;
-            font-weight: 700;
-            color: #475467;
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 10px; border-radius: 999px; background: #f8fafc;
+            border: 1px solid #e5e7eb; font-size: 12px; font-weight: 700; color: #475467;
           }
-
           .table-top-note {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 10px;
-            flex-wrap: wrap;
+            display: flex; justify-content: space-between; align-items: center;
+            gap: 10px; margin-bottom: 10px; flex-wrap: wrap;
           }
-
-          /* ✅ GRN-like sortable header button */
           .sort-btn {
-            border: none;
-            background: transparent;
-            padding: 0;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            cursor: pointer;
-            color: inherit;
+            border: none; background: transparent; padding: 0; font-weight: 600;
+            display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: inherit;
           }
-
-          .sort-btn:hover {
-            color: #5c3e94;
-          }
+          .sort-btn:hover { color: #5c3e94; }
         `}
       </style>
 
@@ -733,7 +553,6 @@ const SalesInvoiceDashboard = () => {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-
             <select
               className="custom-select"
               value={customerFilter}
@@ -746,20 +565,6 @@ const SalesInvoiceDashboard = () => {
                 </option>
               ))}
             </select>
-{/* 
-            <select
-              className="custom-select"
-              value={branchFilter}
-              onChange={(e) => setBranchFilter(e.target.value)}
-            >
-              <option value="All">All Branches</option>
-              {branches.map((b) => (
-                <option key={b._id} value={b._id}>
-                  {b.name}
-                </option>
-              ))}
-            </select> */}
-
             <select
               className="custom-select"
               value={statusFilter}
@@ -771,7 +576,6 @@ const SalesInvoiceDashboard = () => {
               <option value="approved">Approved</option>
               <option value="cancelled">Cancelled</option>
             </select>
-
             <select
               className="custom-select"
               value={paymentStatusFilter}
@@ -782,7 +586,6 @@ const SalesInvoiceDashboard = () => {
               <option value="partially_paid">Partially Paid</option>
               <option value="paid">Paid</option>
             </select>
-
             {isAdminOrDataEntry && (
               <select
                 className="custom-select"
@@ -798,7 +601,6 @@ const SalesInvoiceDashboard = () => {
                 ))}
               </select>
             )}
-
             <button
               type="button"
               className="btn-soft"
@@ -810,7 +612,6 @@ const SalesInvoiceDashboard = () => {
             </button>
           </div>
         </div>
-
         <button className="action-btn" onClick={handleOpenCreate}>
           + Create Invoice
         </button>
@@ -823,7 +624,6 @@ const SalesInvoiceDashboard = () => {
             <i className="bi bi-receipt-cutoff" />
             {visibleCountLabel}
           </span>
-
           {loading && (
             <span className="small text-muted">
               <i className="bi bi-arrow-repeat me-1" />
@@ -841,19 +641,11 @@ const SalesInvoiceDashboard = () => {
                     Invoice <i className={`bi ${getSortIcon("invoiceNo")}`} />
                   </button>
                 </th>
-
                 <th>
                   <button className="sort-btn" onClick={() => handleSort("customer")}>
                     Customer <i className={`bi ${getSortIcon("customer")}`} />
                   </button>
                 </th>
-
-                {/* <th>
-                  <button className="sort-btn" onClick={() => handleSort("branch")}>
-                    Branch <i className={`bi ${getSortIcon("branch")}`} />
-                  </button>
-                </th> */}
-
                 {isAdminOrDataEntry && (
                   <th>
                     <button className="sort-btn" onClick={() => handleSort("salesRep")}>
@@ -861,25 +653,21 @@ const SalesInvoiceDashboard = () => {
                     </button>
                   </th>
                 )}
-
                 <th>
                   <button className="sort-btn" onClick={() => handleSort("amount")}>
                     Amounts <i className={`bi ${getSortIcon("amount")}`} />
                   </button>
                 </th>
-
                 <th>
                   <button className="sort-btn" onClick={() => handleSort("payment")}>
                     Payment <i className={`bi ${getSortIcon("payment")}`} />
                   </button>
                 </th>
-
                 <th>
                   <button className="sort-btn" onClick={() => handleSort("status")}>
                     Status <i className={`bi ${getSortIcon("status")}`} />
                   </button>
                 </th>
-
                 <th>Actions</th>
               </tr>
             </thead>
@@ -894,13 +682,10 @@ const SalesInvoiceDashboard = () => {
 
                   return (
                     <tr key={inv._id} className="invoice-row">
-                      {/* Invoice column */}
                       <td className="col-invoice-main">
                         <div className="invoice-no">{inv.invoiceNo || "-"}</div>
                         <div className="invoice-sub">{formatDate(inv.invoiceDate)}</div>
                       </td>
-
-                      {/* Customer column */}
                       <td>
                         <div className="fw-semibold">{inv.customer?.name || "-"}</div>
                         {inv.customer?.creditStatus ? (
@@ -909,11 +694,6 @@ const SalesInvoiceDashboard = () => {
                           </span>
                         ) : null}
                       </td>
-
-                      {/* Branch column
-                      <td>{inv.branch?.name || "-"}</td> */}
-
-                      {/* Sales rep column */}
                       {isAdminOrDataEntry && (
                         <td>
                           <div className="fw-semibold">
@@ -921,15 +701,13 @@ const SalesInvoiceDashboard = () => {
                           </div>
                         </td>
                       )}
-
-                      {/* Amounts column */}
                       <td>
                         <div className="amount-stack">
                           <div className="amount-main">{formatCurrency(originalTotal)}</div>
                           {returned > 0 ? (
                             <>
                               <div className="amount-sub return">
-                                Return: -{formatCurrency(returned).replace("Rs. ", "Rs. ")}
+                                Return: -{formatCurrency(returned)}
                               </div>
                               <div className="amount-sub net">
                                 Net: {formatCurrency(netTotal)}
@@ -940,33 +718,25 @@ const SalesInvoiceDashboard = () => {
                           )}
                         </div>
                       </td>
-
-                      {/* Payment column */}
                       <td className="payment-cell">
                         <span className={`status-pill-ux ${paymentMeta.className}`}>
                           <i className={`bi ${paymentMeta.icon}`} />
                           {paymentMeta.label}
                         </span>
-
                         <div className="payment-meta">
                           <div>Paid: {formatCurrency(paid)}</div>
                           <div>Balance: {formatCurrency(balance)}</div>
                         </div>
-
                         <div className="payment-progress" title={`Paid ${paidPct.toFixed(0)}%`}>
                           <span style={{ width: `${paidPct}%` }} />
                         </div>
                       </td>
-
-                      {/* Invoice status column */}
                       <td>
                         <span className={`status-pill-ux ${statusMeta.className}`}>
                           <i className={`bi ${statusMeta.icon}`} />
                           {statusMeta.label}
                         </span>
                       </td>
-
-                      {/* Actions column */}
                       <td>
                         <div className="d-flex align-items-center gap-1">
                           <button
@@ -976,7 +746,6 @@ const SalesInvoiceDashboard = () => {
                           >
                             <i className="bi bi-eye" />
                           </button>
-
                           {inv.status === "waiting_for_approval" && (
                             <>
                               <button
@@ -986,15 +755,13 @@ const SalesInvoiceDashboard = () => {
                               >
                                 <i className="bi bi-pencil-square" />
                               </button>
-
                               <button
                                 className="icon-btn-ux delete"
                                 title="Delete Invoice"
-                                onClick={() => deleteInvoice(inv)}  // Call delete function
+                                onClick={() => deleteInvoice(inv)}
                               >
                                 <i className="bi bi-trash" />
                               </button>
-
                               {isAdminOrDataEntry && (
                                 <button
                                   className="icon-btn-ux approve"
@@ -1045,16 +812,18 @@ const SalesInvoiceDashboard = () => {
           invoice={invoiceForView}
           onClose={() => setInvoiceViewOpen(false)}
           onViewReturn={handleViewReturnFromInvoiceModal}
-          onOpenPayment={openPaymentViewer}
+          onOpenPayment={handleOpenPaymentFromInvoice}
         />
       )}
 
-      {/* View payment modal */}
+      {/* View payment modal — always view mode, full payment fetched before open */}
       {paymentViewOpen && (
         <PaymentCreateModal
           show={paymentViewOpen}
+          mode="view"
           payment={paymentForView}
           onClose={closePaymentViewer}
+          onSuccess={() => {}}
         />
       )}
 

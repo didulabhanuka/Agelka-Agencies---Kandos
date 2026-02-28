@@ -28,6 +28,62 @@ function normalizeId(v) {
   return String(v._id || v);
 }
 
+// ─── Stock validation helper ───────────────────────────────────────────────────
+//
+// Primary-only item (no baseUom / factorToBase = 1):
+//   primaryQty ≤ qtyOnHandPrimary
+//
+// Dual-UOM item (baseUom present, factorToBase > 1):
+//   primaryQty ≤ qtyOnHandPrimary          ← can't break open more packs than exist
+//   baseQty is NOT capped by qtyOnHandBase  ← loose pieces can come from breaking packs
+//   (primaryQty × factorToBase) + baseQty ≤ runningBalance   ← hard combined cap
+//
+// runningBalance = qtyOnHandPrimary * factorToBase + qtyOnHandBase
+//
+function validateStockForIssue({ qtyPrimary, qtyBase, stockPrimary, stockBase, factorToBase, hasBaseUom, itemId }) {
+  const runningBalance = stockPrimary * factorToBase + stockBase;
+
+  if (!hasBaseUom) {
+    // Primary-only: simple cap
+    if (qtyPrimary > stockPrimary) {
+      throw Object.assign(
+        new Error(
+          `Insufficient stock for item ${itemId}. ` +
+          `Available: ${stockPrimary} (primary). Required: ${qtyPrimary}.`
+        ),
+        { status: 400, code: "INSUFFICIENT_STOCK" }
+      );
+    }
+    return; // valid
+  }
+
+  // Dual-UOM: primary is capped by whole-pack stock
+  if (qtyPrimary > stockPrimary) {
+    throw Object.assign(
+      new Error(
+        `Insufficient pack stock for item ${itemId}. ` +
+        `Available packs: ${stockPrimary}. Required packs: ${qtyPrimary}.`
+      ),
+      { status: 400, code: "INSUFFICIENT_STOCK" }
+    );
+  }
+
+  // Combined running-balance check (base can come from breaking packs)
+  const consumed = qtyPrimary * factorToBase + qtyBase;
+  if (consumed > runningBalance) {
+    throw Object.assign(
+      new Error(
+        `Insufficient total stock for item ${itemId}. ` +
+        `Running balance: ${runningBalance} base units ` +
+        `(${stockPrimary} packs × ${factorToBase} + ${stockBase} loose). ` +
+        `Required: ${consumed} base units ` +
+        `(${qtyPrimary} packs × ${factorToBase} + ${qtyBase} loose).`
+      ),
+      { status: 400, code: "INSUFFICIENT_STOCK" }
+    );
+  }
+}
+
 // Create a sales invoice in pending state with validated item lines and pricing fallbacks.
 async function createSalesInvoice(payload) {
   const session = await mongoose.startSession();
@@ -42,14 +98,14 @@ async function createSalesInvoice(payload) {
     const itemsArray = rawItems || [];
     if (!itemsArray.length) throw Object.assign(new Error("Invoice must contain at least one item"), { status: 400 });
 
-const itemIds = itemsArray.map((line) => toObjectId(line.item?._id || line.item));
-const itemDocs = await Item.find({ _id: { $in: itemIds } }).select("sellingPriceBase sellingPricePrimary factorToBase baseUom primaryUom").lean();
-const itemMap = new Map(itemDocs.map((doc) => [String(doc._id), doc])); // Ensure we store string-based keys in the map
+    const itemIds = itemsArray.map((line) => toObjectId(line.item?._id || line.item));
+    const itemDocs = await Item.find({ _id: { $in: itemIds } }).select("sellingPriceBase sellingPricePrimary factorToBase baseUom primaryUom").lean();
+    const itemMap = new Map(itemDocs.map((doc) => [String(doc._id), doc]));
 
-const items = itemsArray.map((line) => {
-  const itemId = toObjectId(line.item?._id || line.item); // Make sure we convert the item ID here to ObjectId
-  const itemDoc = itemMap.get(String(itemId)); // Always use the string-based ID to retrieve the item from the map
-  if (!itemDoc) throw Object.assign(new Error(`Item not found for id ${itemId}`), { status: 400 });
+    const items = itemsArray.map((line) => {
+      const itemId = toObjectId(line.item?._id || line.item);
+      const itemDoc = itemMap.get(String(itemId));
+      if (!itemDoc) throw Object.assign(new Error(`Item not found for id ${itemId}`), { status: 400 });
 
       const qtyPrimary = toNumber(line.primaryQty);
       const qtyBase = toNumber(line.baseQty);
@@ -86,17 +142,17 @@ const items = itemsArray.map((line) => {
 
       const totalSellingValue = qtyPrimary * sellingPricePrimary + qtyBase * sellingPriceBase;
 
-      return { 
-        item: itemId, 
-        sellingPriceBase, 
-        sellingPricePrimary, 
-        factorToBase, 
-        primaryQty: qtyPrimary, 
-        baseQty: qtyBase, 
-        totalSellingValue, 
+      return {
+        item: itemId,
+        sellingPriceBase,
+        sellingPricePrimary,
+        factorToBase,
+        primaryQty: qtyPrimary,
+        baseQty: qtyBase,
+        totalSellingValue,
         discountPerUnit,
-        baseUom: itemDoc.baseUom,  
-        primaryUom: itemDoc.primaryUom  
+        baseUom: itemDoc.baseUom,
+        primaryUom: itemDoc.primaryUom,
       };
     });
 
@@ -132,7 +188,6 @@ const items = itemsArray.map((line) => {
 }
 
 // Approve a pending invoice, enforce credit rules, post ledgers, and update sales-rep stock.
-// Approve a pending invoice, enforce credit rules, post ledgers, and update sales-rep stock.
 async function approveInvoice(id, userId) {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -160,77 +215,119 @@ async function approveInvoice(id, userId) {
       }
     }
 
-    // Check for sufficient stock
+    // ── Stock validation (dual-UOM aware) ──────────────────────────────────
     for (const line of invoice.items || []) {
-      const qtyPrimary = Math.abs(toNumber(line.primaryQty));
-      const qtyBase = Math.abs(toNumber(line.baseQty));
+      const qtyPrimary  = Math.abs(toNumber(line.primaryQty));
+      const qtyBase     = Math.abs(toNumber(line.baseQty));
+      const factorToBase = toNumber(line.factorToBase || 1);
+      const hasBaseUom  = !!line.baseUom && factorToBase > 1;
 
-      // Fetch current stock for the sales rep and item
-      const salesRepStock = await SalesRepStock.findOne({ salesRep: invoice.salesRep, item: line.item }).session(session).lean();
-      console.log("Sales Rep Stock:", salesRepStock);
-      if (!salesRepStock) throw Object.assign(new Error(`SalesRep stock not found for item ${line.item}`), { status: 400, code: "STOCK_NOT_FOUND" });
+      const salesRepStock = await SalesRepStock.findOne({
+        salesRep: invoice.salesRep,
+        item: line.item,
+      }).session(session).lean();
 
-      // Check if there's enough stock for both primary and base quantities
-      const currentPrimary = toNumber(salesRepStock.qtyOnHandPrimary || 0);
-      const currentBase = toNumber(salesRepStock.qtyOnHandBase || 0);
-
-      if (currentPrimary < qtyPrimary || currentBase < qtyBase) {
-        throw Object.assign(new Error(`Insufficient stock for item ${line.item}. Available primary: ${currentPrimary}, base: ${currentBase}, required primary: ${qtyPrimary}, base: ${qtyBase}`), { status: 400, code: "INSUFFICIENT_STOCK" });
+      if (!salesRepStock) {
+        throw Object.assign(
+          new Error(`SalesRep stock not found for item ${line.item}`),
+          { status: 400, code: "STOCK_NOT_FOUND" }
+        );
       }
+
+      const stockPrimary = toNumber(salesRepStock.qtyOnHandPrimary || 0);
+      const stockBase    = toNumber(salesRepStock.qtyOnHandBase    || 0);
+
+      // Use the unified validator that understands running-balance logic
+      validateStockForIssue({
+        qtyPrimary,
+        qtyBase,
+        stockPrimary,
+        stockBase,
+        factorToBase,
+        hasBaseUom,
+        itemId: String(line.item),
+      });
     }
 
-    // Proceed with updating stock and invoice approval
-    invoice.status = "approved";
+    // ── Approve & post ledgers ─────────────────────────────────────────────
+    invoice.status     = "approved";
     invoice.approvedBy = userId;
     invoice.approvedAt = new Date();
 
     const salesRepId = invoice.salesRep ? String(invoice.salesRep) : null;
 
     for (const line of invoice.items || []) {
-      const qtyPrimary = Math.abs(toNumber(line.primaryQty));
-      const qtyBase = Math.abs(toNumber(line.baseQty));
+      const qtyPrimary   = Math.abs(toNumber(line.primaryQty));
+      const qtyBase      = Math.abs(toNumber(line.baseQty));
 
-      const itemDoc = await Item.findById(line.item).select("avgCostBase avgCostPrimary factorToBase baseUom primaryUom").session(session).lean();
-      const avgCostBase = toNumber(itemDoc?.avgCostBase);
+      const itemDoc = await Item.findById(line.item)
+        .select("avgCostBase avgCostPrimary factorToBase baseUom primaryUom")
+        .session(session)
+        .lean();
+
+      const avgCostBase    = toNumber(itemDoc?.avgCostBase);
       const avgCostPrimary = toNumber(itemDoc?.avgCostPrimary);
-      const factorToBase = toNumber(line.factorToBase || itemDoc?.factorToBase || 1);
+      const factorToBase   = toNumber(line.factorToBase || itemDoc?.factorToBase || 1);
 
-      line.baseUom = itemDoc.baseUom;
+      line.baseUom    = itemDoc.baseUom;
       line.primaryUom = itemDoc.primaryUom;
 
       let movementPrimaryForLedger = qtyPrimary;
-      let movementBaseForLedger = qtyBase;
+      let movementBaseForLedger    = qtyBase;
 
       if (invoice.salesRep) {
-        const salesRepStock = await SalesRepStock.findOne({ salesRep: invoice.salesRep, item: line.item }).session(session).lean();
-        if (!salesRepStock) throw Object.assign(new Error(`SalesRep stock not found for item ${line.item}`), { status: 400, code: "STOCK_NOT_FOUND" });
+        const salesRepStock = await SalesRepStock.findOne({
+          salesRep: invoice.salesRep,
+          item: line.item,
+        }).session(session).lean();
+
+        if (!salesRepStock) {
+          throw Object.assign(
+            new Error(`SalesRep stock not found for item ${line.item}`),
+            { status: 400, code: "STOCK_NOT_FOUND" }
+          );
+        }
 
         const currentPrimary = toNumber(salesRepStock.qtyOnHandPrimary || 0);
-        const currentBase = toNumber(salesRepStock.qtyOnHandBase || 0);
+        const currentBase    = toNumber(salesRepStock.qtyOnHandBase    || 0);
 
         const { movementPrimary, movementBase, newPrimary, newBase } = computeIssueMovement({
           currentPrimary,
           currentBase,
           issuePrimary: qtyPrimary,
-          issueBase: qtyBase,
+          issueBase:    qtyBase,
           factorToBase,
-          errorMeta: { item: String(line.item), salesRep: String(invoice.salesRep), invoiceId: String(invoice._id) },
+          errorMeta: {
+            item:      String(line.item),
+            salesRep:  String(invoice.salesRep),
+            invoiceId: String(invoice._id),
+          },
         });
 
         movementPrimaryForLedger = movementPrimary;
-        movementBaseForLedger = movementBase;
+        movementBaseForLedger    = movementBase;
 
         const newStockValuePrimary = newPrimary * (avgCostPrimary || 0);
-        const newStockValueBase = newBase * (avgCostBase || 0);
+        const newStockValueBase    = newBase    * (avgCostBase    || 0);
 
         await SalesRepStock.findOneAndUpdate(
           { salesRep: invoice.salesRep, item: line.item },
-          { $set: { qtyOnHandBase: newBase, qtyOnHandPrimary: newPrimary, stockValueBase: newStockValueBase, stockValuePrimary: newStockValuePrimary, factorToBase } },
+          {
+            $set: {
+              qtyOnHandBase:      newBase,
+              qtyOnHandPrimary:   newPrimary,
+              stockValueBase:     newStockValueBase,
+              stockValuePrimary:  newStockValuePrimary,
+              factorToBase,
+            },
+          },
           { new: true, session }
         );
       }
 
-      const itemTotalValue = movementBaseForLedger * avgCostBase + movementPrimaryForLedger * avgCostPrimary;
+      const itemTotalValue =
+        movementBaseForLedger    * avgCostBase +
+        movementPrimaryForLedger * avgCostPrimary;
 
       await postLedger({
         item: line.item,
@@ -239,13 +336,13 @@ async function approveInvoice(id, userId) {
         transactionType: "sale",
         refModel: "SalesInvoice",
         refId: invoice._id,
-        sellingPriceBase: line.sellingPriceBase,
+        sellingPriceBase:    line.sellingPriceBase,
         sellingPricePrimary: line.sellingPricePrimary,
         avgCostBase,
         avgCostPrimary,
         factorToBase,
         primaryQty: line.primaryQty,
-        baseQty: line.baseQty,
+        baseQty:    line.baseQty,
         itemTotalValue,
         session,
       });
@@ -258,11 +355,11 @@ async function approveInvoice(id, userId) {
         transactionType: "sale",
         refModel: "SalesInvoice",
         refId: invoice._id,
-        sellingPriceBase: line.sellingPriceBase,
+        sellingPriceBase:    line.sellingPriceBase,
         sellingPricePrimary: line.sellingPricePrimary,
         factorToBase,
         primaryQty: line.primaryQty,
-        baseQty: line.baseQty,
+        baseQty:    line.baseQty,
         totalSellingValue: line.totalSellingValue,
         createdBy: userId,
         session,
@@ -270,7 +367,6 @@ async function approveInvoice(id, userId) {
     }
 
     await invoice.save({ session });
-
     await session.commitTransaction();
     session.endSession();
 
@@ -293,7 +389,7 @@ async function getInvoice(id, scope = {}) {
     .populate("customer", "name customerCode creditStatus")
     .populate("branch", "name branchCode")
     .populate("salesRep", "repCode name")
-    .populate("items.item", "itemCode name brand productType baseUnit baseUom primaryUom") 
+    .populate("items.item", "itemCode name brand productType baseUnit baseUom primaryUom")
     .populate("returns.returnId", "returnNo returnDate")
     .populate("returns.items.item", "itemCode name")
     .populate("paymentAllocations.paymentId", "paymentNo paymentDate amount method referenceNo")
@@ -303,10 +399,10 @@ async function getInvoice(id, scope = {}) {
   if (!invoice) return null;
 
   const remainingItems = (invoice.items || []).map((line) => {
-    const itemIdStr = String(line.item._id || line.item);
+    const itemIdStr    = String(line.item._id || line.item);
     const factorToBase = toNumber(line.factorToBase || 1);
-    const qtyPrimary = toNumber(line.primaryQty || 0);
-    const qtyBase = toNumber(line.baseQty || 0);
+    const qtyPrimary   = toNumber(line.primaryQty || 0);
+    const qtyBase      = toNumber(line.baseQty     || 0);
     const totalInvoiceBase = qtyPrimary * factorToBase + qtyBase;
 
     let alreadyReturnedTotalBase = 0;
@@ -314,14 +410,14 @@ async function getInvoice(id, scope = {}) {
       for (const retLine of ret.items || []) {
         if (String(retLine.item._id || retLine.item) !== itemIdStr) continue;
         const rPrimary = toNumber(retLine.qtyReturnedPrimary || 0);
-        const rBase = toNumber(retLine.qtyReturnedBase || 0);
+        const rBase    = toNumber(retLine.qtyReturnedBase    || 0);
         alreadyReturnedTotalBase += rPrimary * factorToBase + rBase;
       }
     }
 
-    const remainingTotalBase = Math.max(totalInvoiceBase - alreadyReturnedTotalBase, 0);
+    const remainingTotalBase  = Math.max(totalInvoiceBase - alreadyReturnedTotalBase, 0);
     const remainingPrimaryQty = Math.floor(remainingTotalBase / factorToBase);
-    const remainingBaseQty = remainingTotalBase % factorToBase;
+    const remainingBaseQty    = remainingTotalBase % factorToBase;
 
     return { item: line.item._id || line.item, remainingPrimaryQty, remainingBaseQty, remainingTotalBase, factorToBase };
   });
@@ -334,9 +430,9 @@ async function getInvoice(id, scope = {}) {
 async function listInvoices(filter = {}, options = {}, scope = {}) {
   const query = {};
   if (filter.customer) query.customer = filter.customer;
-  if (filter.status) query.status = filter.status;
-  if (filter.branch) query.branch = filter.branch;
-  if (scope.salesRep) query.salesRep = toObjectId(scope.salesRep);
+  if (filter.status)   query.status   = filter.status;
+  if (filter.branch)   query.branch   = filter.branch;
+  if (scope.salesRep)       query.salesRep = toObjectId(scope.salesRep);
   else if (filter.salesRep) query.salesRep = toObjectId(filter.salesRep);
 
   const limit = Number(options.limit) || 100;
@@ -344,7 +440,7 @@ async function listInvoices(filter = {}, options = {}, scope = {}) {
   return SalesInvoice.find(query)
     .sort({ invoiceDate: -1 })
     .limit(limit)
-    .populate("branch", "name branchCode")
+    .populate("branch",   "name branchCode")
     .populate("customer", "name customerCode creditStatus")
     .populate("salesRep", "repCode name")
     .lean();
@@ -393,36 +489,36 @@ async function updateInvoice(id, payload, scope = {}) {
 
   if (Array.isArray(payload.items)) {
     const itemsArray = payload.items;
-    const itemIds = itemsArray.map((line) => toObjectId(line.item?._id || line.item));
-    const itemDocs = await Item.find({ _id: { $in: itemIds } }).select("sellingPriceBase sellingPricePrimary factorToBase").lean();
-    const itemMap = new Map(itemDocs.map((doc) => [String(doc._id), doc]));
+    const itemIds    = itemsArray.map((line) => toObjectId(line.item?._id || line.item));
+    const itemDocs   = await Item.find({ _id: { $in: itemIds } }).select("sellingPriceBase sellingPricePrimary factorToBase baseUom primaryUom").lean();
+    const itemMap    = new Map(itemDocs.map((doc) => [String(doc._id), doc]));
 
     const items = itemsArray.map((line) => {
-      const itemId = toObjectId(line.item?._id || line.item);
+      const itemId  = toObjectId(line.item?._id || line.item);
       const itemDoc = itemMap.get(String(itemId));
       if (!itemDoc) throw Object.assign(new Error(`Item not found for id ${itemId}`), { status: 400 });
 
-      const qtyPrimary = toNumber(line.primaryQty);
-      const qtyBase = toNumber(line.baseQty);
+      const qtyPrimary   = toNumber(line.primaryQty);
+      const qtyBase      = toNumber(line.baseQty);
       const factorToBase = toNumber(line.factorToBase || itemDoc.factorToBase || 1);
 
       if (qtyPrimary < 0 || qtyBase < 0) throw Object.assign(new Error(`Invalid quantity (negative) for item ${itemId}`), { status: 400 });
       if (qtyPrimary === 0 && qtyBase === 0) throw Object.assign(new Error(`At least one quantity must be > 0 for item ${itemId}`), { status: 400 });
 
-      let sellingPriceBase = 0;
+      let sellingPriceBase    = 0;
       let sellingPricePrimary = 0;
 
       if (qtyBase > 0) {
-        const rawBase = line.sellingPriceBase;
+        const rawBase      = line.sellingPriceBase;
         const fallbackBase = itemDoc.sellingPriceBase;
-        sellingPriceBase = toNumber(rawBase !== null && rawBase !== undefined ? rawBase : fallbackBase);
+        sellingPriceBase   = toNumber(rawBase !== null && rawBase !== undefined ? rawBase : fallbackBase);
         if (sellingPriceBase <= 0) throw Object.assign(new Error(`Invalid base selling price for item ${itemId}`), { status: 400 });
       }
 
       if (qtyPrimary > 0) {
-        const rawPrimary = line.sellingPricePrimary;
+        const rawPrimary      = line.sellingPricePrimary;
         const fallbackPrimary = itemDoc.sellingPricePrimary;
-        sellingPricePrimary = toNumber(rawPrimary !== null && rawPrimary !== undefined ? rawPrimary : fallbackPrimary);
+        sellingPricePrimary   = toNumber(rawPrimary !== null && rawPrimary !== undefined ? rawPrimary : fallbackPrimary);
         if (sellingPricePrimary <= 0) throw Object.assign(new Error(`Invalid primary selling price for item ${itemId}`), { status: 400 });
       }
 
@@ -437,20 +533,31 @@ async function updateInvoice(id, payload, scope = {}) {
 
       const totalSellingValue = qtyPrimary * sellingPricePrimary + qtyBase * sellingPriceBase;
 
-      return { item: itemId, sellingPriceBase, sellingPricePrimary, factorToBase, primaryQty: qtyPrimary, baseQty: qtyBase, totalSellingValue, discountPerUnit };
+      return {
+        item: itemId,
+        sellingPriceBase,
+        sellingPricePrimary,
+        factorToBase,
+        primaryQty: qtyPrimary,
+        baseQty:    qtyBase,
+        totalSellingValue,
+        discountPerUnit,
+        baseUom:    itemDoc.baseUom,
+        primaryUom: itemDoc.primaryUom,
+      };
     });
 
-    invoice.items = items;
-    invoice.totalValue = items.reduce((sum, i) => sum + i.totalSellingValue, 0);
+    invoice.items              = items;
+    invoice.totalValue         = items.reduce((sum, i) => sum + i.totalSellingValue, 0);
     invoice.totalReturnedValue = 0;
-    invoice.totalBalanceValue = invoice.totalValue;
-    invoice.hasReturns = false;
-    invoice.returns = [];
+    invoice.totalBalanceValue  = invoice.totalValue;
+    invoice.hasReturns         = false;
+    invoice.returns            = [];
   }
 
-  if (payload.invoiceDate) invoice.invoiceDate = payload.invoiceDate;
-  if (payload.remarks !== undefined) invoice.remarks = payload.remarks;
-  if (payload.salesRep !== undefined) invoice.salesRep = payload.salesRep ? toObjectId(payload.salesRep) : null;
+  if (payload.invoiceDate)            invoice.invoiceDate = payload.invoiceDate;
+  if (payload.remarks !== undefined)  invoice.remarks     = payload.remarks;
+  if (payload.salesRep !== undefined) invoice.salesRep    = payload.salesRep ? toObjectId(payload.salesRep) : null;
 
   await invoice.save();
   return invoice.toObject();
@@ -458,17 +565,17 @@ async function updateInvoice(id, payload, scope = {}) {
 
 // List available sale items from current stock snapshot for a branch and optional sales rep.
 async function listAvailableSaleItems(branchId, salesRepId) {
-  if (!branchId || !mongoose.Types.ObjectId.isValid(branchId)) 
+  if (!branchId || !mongoose.Types.ObjectId.isValid(branchId))
     throw Object.assign(new Error("Invalid branch ID"), { status: 400 });
 
-  if (!salesRepId || !mongoose.Types.ObjectId.isValid(salesRepId)) 
+  if (!salesRepId || !mongoose.Types.ObjectId.isValid(salesRepId))
     throw Object.assign(new Error("Sales Rep ID is required to load available items"), { status: 400 });
 
   const stockRows = await getCurrentStock(branchId, salesRepId);
   if (!stockRows || !stockRows.length) return [];
 
   const nonZeroStock = stockRows.filter((row) => {
-    const baseQty = Number((row.qtyOnHandRaw && row.qtyOnHandRaw.baseQty) ?? (row.qtyOnHand && row.qtyOnHand.baseQty) ?? 0);
+    const baseQty    = Number((row.qtyOnHandRaw && row.qtyOnHandRaw.baseQty)    ?? (row.qtyOnHand && row.qtyOnHand.baseQty)    ?? 0);
     const primaryQty = Number((row.qtyOnHandRaw && row.qtyOnHandRaw.primaryQty) ?? (row.qtyOnHand && row.qtyOnHand.primaryQty) ?? 0);
     return baseQty !== 0 || primaryQty !== 0;
   });

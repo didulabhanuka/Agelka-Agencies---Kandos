@@ -1,5 +1,4 @@
 const router = require("express").Router();
-
 const userRoutes = require("./user/user.routes");
 const authRoutes = require("./auth/auth.routes");
 const ledgerRoutes = require("./ledger/ledger.routes");
@@ -11,6 +10,7 @@ const purchasesRoutes = require("./purchases/purchases.routes");
 const auditRoutes = require("./audit/audit.routes");
 const inquiryRoutes = require("./inquiry/inquiry.routes");
 const settingsRoutes = require("./settings/settings.routes");
+const periodRoutes = require("./period/period.routes"); 
 
 // Healthcheck
 router.get('/health', (req, res) => {
@@ -29,6 +29,6 @@ router.use("/purchase", purchasesRoutes);
 router.use("/audit", auditRoutes);
 router.use("/inquiry", inquiryRoutes);
 router.use("/settings", settingsRoutes);
-
+router.use("/period", periodRoutes); 
 
 module.exports = router;

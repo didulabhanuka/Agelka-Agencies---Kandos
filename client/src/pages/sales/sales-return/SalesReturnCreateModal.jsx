@@ -7,7 +7,7 @@ import { useAuth } from "../../../context/AuthContext";
 
 import {
   createSalesReturn,
-  updateSalesReturn,          // ← make sure this is exported from your API file
+  updateSalesReturn,
   listSalesInvoices,
   getSalesInvoice,
 } from "../../../lib/api/sales.api";
@@ -41,6 +41,24 @@ function splitFromTotalBase(totalBase, factorToBase = 1) {
   return { primary: Math.floor(t / f), base: t % f, totalBase: t };
 }
 
+function splitRemainingByOriginalPattern({ remainingTotalBase, soldPrimary, soldBase, factorToBase }) {
+  const f   = Math.max(1, Math.trunc(Number(factorToBase) || 1));
+  const rem = Math.max(0, Math.trunc(Number(remainingTotalBase) || 0));
+
+  const hadPrimary = Number(soldPrimary) > 0;
+  const hadBase    = Number(soldBase)    > 0;
+
+  if (hadBase && !hadPrimary) {
+    return { primary: 0, base: rem };
+  }
+
+  if (hadPrimary && !hadBase) {
+    return { primary: Math.floor(rem / f), base: rem % f };
+  }
+
+  return { primary: Math.floor(rem / f), base: rem % f };
+}
+
 const buildEmptyForm = () => ({
   returnNo: generateReturnNo(),
   branch: "",
@@ -56,8 +74,8 @@ const getInvoiceSalesRepId = (inv) =>
   inv?.salesRep?._id || inv?.salesRep || inv?.salesRepId || "";
 
 function getInvoiceLineSoldSplit(line) {
-  const legacyQty = Number(line.qty ?? 0);
-  const baseQty = Number(line.baseQty ?? 0);
+  const legacyQty  = Number(line.qty ?? 0);
+  const baseQty    = Number(line.baseQty ?? 0);
   const primaryQty = Number(line.primaryQty ?? 0);
   if (baseQty > 0 || primaryQty > 0) return { base: baseQty, primary: primaryQty };
   if (legacyQty > 0) return { base: 0, primary: legacyQty };
@@ -65,14 +83,12 @@ function getInvoiceLineSoldSplit(line) {
 }
 
 function getReturnLineSplit(it) {
-  const baseFromInvoice = Number(it.qtyReturnedBase ?? 0);
+  const baseFromInvoice    = Number(it.qtyReturnedBase    ?? 0);
   const primaryFromInvoice = Number(it.qtyReturnedPrimary ?? 0);
-  const baseFromReturn = Number(it.qtyReturnBase ?? it.baseQtyReturn ?? 0);
-  const primaryFromReturn = Number(
-    it.qtyReturnPrimary ?? it.primaryQtyReturn ?? it.qtyReturn ?? it.qtyReturned ?? 0
-  );
+  const baseFromReturn     = Number(it.qtyReturnBase    ?? it.baseQtyReturn    ?? 0);
+  const primaryFromReturn  = Number(it.qtyReturnPrimary ?? it.primaryQtyReturn ?? it.qtyReturn ?? it.qtyReturned ?? 0);
   return {
-    base: baseFromInvoice || baseFromReturn,
+    base:    baseFromInvoice    || baseFromReturn,
     primary: primaryFromInvoice || primaryFromReturn,
   };
 }
@@ -80,7 +96,7 @@ function getReturnLineSplit(it) {
 function formatQtySplit(base, primary, baseUom, primaryUom) {
   const parts = [];
   if (Number(primary) > 0) parts.push(`${primary} ${primaryUom || ""}`.trim());
-  if (Number(base) > 0) parts.push(`${base} ${baseUom || ""}`.trim());
+  if (Number(base)    > 0) parts.push(`${base} ${baseUom    || ""}`.trim());
   if (!parts.length) return "0";
   return parts.join(" + ");
 }
@@ -104,11 +120,11 @@ function formatDisplayDate(value) {
 }
 
 function computeReturnLineTotal(row, baseQty, primaryQty) {
-  const priceBase = Number(row.sellingPriceBase || 0);
+  const priceBase    = Number(row.sellingPriceBase    || 0);
   const pricePrimary = Number(row.sellingPricePrimary || 0);
-  const discount = Number(row.discountPerUnit || 0);
-  const gross = baseQty * priceBase + primaryQty * pricePrimary;
-  const unitCount = baseQty + primaryQty;
+  const discount     = Number(row.discountPerUnit     || 0);
+  const gross        = baseQty * priceBase + primaryQty * pricePrimary;
+  const unitCount    = baseQty + primaryQty;
   return Math.max(0, gross - discount * unitCount);
 }
 
@@ -122,38 +138,38 @@ const SalesReturnCreateModal = ({
   onSuccess,
   onViewInvoice,
 }) => {
-  const isView   = mode === "view";
-  const isCreate = mode === "create";
-  const isEdit   = mode === "edit";
-  const isEditable = isCreate || isEdit;  // fields are interactive
+  const isView     = mode === "view";
+  const isCreate   = mode === "create";
+  const isEdit     = mode === "edit";
+  const isEditable = isCreate || isEdit;
 
   // RBAC
   const { user } = useAuth();
   const actorType = user?.actorType;
-  const role = user?.role;
+  const role      = user?.role;
   const isAdminOrDataEntry = actorType === "User" && (role === "Admin" || role === "DataEntry");
-  const isSalesRep = actorType === "SalesRep";
+  const isSalesRep         = actorType === "SalesRep";
   const loggedInSalesRepId =
     user?.id || user?._id || user?.salesRep?._id || user?.salesRepId || user?.actorId || "";
 
   // Local state
-  const [loading, setLoading] = useState(false);
-  const [branches, setBranches] = useState([]);
-  const [customers, setCustomers] = useState([]);
-  const [salesReps, setSalesReps] = useState([]);
-  const [allInvoices, setAllInvoices] = useState([]);
-  const [invoices, setInvoices] = useState([]);
+  const [loading, setLoading]           = useState(false);
+  const [branches, setBranches]         = useState([]);
+  const [customers, setCustomers]       = useState([]);
+  const [salesReps, setSalesReps]       = useState([]);
+  const [allInvoices, setAllInvoices]   = useState([]);
+  const [invoices, setInvoices]         = useState([]);
   const [sourceInvoice, setSourceInvoice] = useState(null);
-  const [totalValue, setTotalValue] = useState(0);
-  const [form, setForm] = useState(buildEmptyForm);
+  const [totalValue, setTotalValue]     = useState(0);
+  const [form, setForm]                 = useState(buildEmptyForm);
+  const [qtyErrors, setQtyErrors]       = useState({});
 
   // Access safety for VIEW mode
   const returnSalesRepId =
     selectedReturn?.salesRep?._id ||
     selectedReturn?.salesRep ||
     selectedReturn?.originalInvoice?.salesRep?._id ||
-    selectedReturn?.originalInvoice?.salesRep ||
-    "";
+    selectedReturn?.originalInvoice?.salesRep || "";
 
   const hasViewAccess =
     !isSalesRep ||
@@ -195,10 +211,10 @@ const SalesReturnCreateModal = ({
   const returnStats = useMemo(() => {
     const rows = form.items || [];
     return {
-      totalLines: rows.length,
+      totalLines:      rows.length,
       returnableLines: rows.filter((r) => Number(r.remainingTotalBase || 0) > 0).length,
-      exhaustedLines: rows.filter((r) => Number(r.remainingTotalBase || 0) <= 0).length,
-      selectedLines: rows.filter(
+      exhaustedLines:  rows.filter((r) => Number(r.remainingTotalBase || 0) <= 0).length,
+      selectedLines:   rows.filter(
         (r) => Number(r.returnBaseQty || 0) > 0 || Number(r.returnPrimaryQty || 0) > 0
       ).length,
     };
@@ -250,14 +266,12 @@ const SalesReturnCreateModal = ({
   // ── Reset form for CREATE ───────────────────────────────────────────────────
   useEffect(() => {
     if (!show || !isCreate) return;
-    setForm({
-      ...buildEmptyForm(),
-      salesRep: isSalesRep ? loggedInSalesRepId : "",
-    });
+    setForm({ ...buildEmptyForm(), salesRep: isSalesRep ? loggedInSalesRepId : "" });
     setAllInvoices([]);
     setInvoices([]);
     setSourceInvoice(null);
     setTotalValue(0);
+    setQtyErrors({});
   }, [show, isCreate, isSalesRep, loggedInSalesRepId]);
 
   useEffect(() => {
@@ -266,17 +280,16 @@ const SalesReturnCreateModal = ({
       setForm((p) => ({ ...p, salesRep: loggedInSalesRepId }));
   }, [show, isSalesRep, loggedInSalesRepId]);
 
-  // ── Load approved invoices (CREATE & EDIT) ──────────────────────────────────
+  // ── Load approved invoices (CREATE only) ───────────────────────────────────
+  // In EDIT mode the invoice is fixed and must never be cleared or reloaded,
+  // as that would race with and undo the async EDIT form setup.
   useEffect(() => {
-    if (!show || !isEditable) return;
+    if (!show || !isCreate) return;
     if (!form.branch || !form.customer) {
-      // In EDIT mode we keep the existing invoice — don't wipe items on mount
-      if (isCreate) {
-        setAllInvoices([]);
-        setInvoices([]);
-        setSourceInvoice(null);
-        setForm((p) => ({ ...p, originalInvoice: "", items: [] }));
-      }
+      setAllInvoices([]);
+      setInvoices([]);
+      setSourceInvoice(null);
+      setForm((p) => ({ ...p, originalInvoice: "", items: [] }));
       return;
     }
 
@@ -302,30 +315,26 @@ const SalesReturnCreateModal = ({
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [show, isEditable, form.branch, form.customer]);
+  }, [show, isCreate, form.branch, form.customer]);
 
-  // Refilter when sales rep changes (CREATE / EDIT)
+  // Refilter invoice list when sales rep changes (CREATE only)
   useEffect(() => {
-    if (!show || !isEditable) return;
+    if (!show || !isCreate) return;
     const filtered = filterInvoicesByRole(allInvoices, form.salesRep);
     setInvoices(filtered);
-    const stillValid = filtered.some(
-      (inv) => String(inv._id) === String(form.originalInvoice)
-    );
-    if (!stillValid && isCreate) {
+    const stillValid = filtered.some((inv) => String(inv._id) === String(form.originalInvoice));
+    if (!stillValid) {
       setSourceInvoice(null);
       setForm((p) => ({ ...p, originalInvoice: "", items: [] }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.salesRep, allInvoices, show, isEditable]);
+  }, [form.salesRep, allInvoices, show, isCreate]);
 
   // ── Build already-returned map ──────────────────────────────────────────────
   const buildAlreadyReturnedMap = (invoice, excludeReturnId = null) => {
     const map = new Map();
     if (!invoice?.returns) return map;
     invoice.returns.forEach((ret) => {
-      // When editing, exclude the current return's quantities so they don't
-      // count against the remaining limit
       if (excludeReturnId && String(ret._id) === String(excludeReturnId)) return;
       (ret.items || []).forEach((it) => {
         const key = String(it.item?._id || it.item);
@@ -344,47 +353,59 @@ const SalesReturnCreateModal = ({
       const { base: soldBase, primary: soldPrimary } = getInvoiceLineSoldSplit(line);
       const retSplit = returnedMap.get(String(itemId)) || { base: 0, primary: 0 };
 
-      const baseUom = line.baseUom || line.item?.baseUom || line.item?.baseUomName || "";
+      const baseUom    = line.baseUom    || line.item?.baseUom    || line.item?.baseUomName    || "";
       const primaryUom = line.primaryUom || line.item?.primaryUom || line.item?.primaryUomName || "";
       const factorToBase = Number(line.factorToBase) || Number(line.item?.factorToBase) || 1;
 
-      const invoiceTotalBase = toTotalBase({ primary: soldPrimary, base: soldBase, factorToBase });
-      const alreadyReturnedTotalBase = toTotalBase({
-        primary: retSplit.primary, base: retSplit.base, factorToBase,
+      const invoiceTotalBase         = toTotalBase({ primary: soldPrimary,    base: soldBase,      factorToBase });
+      const alreadyReturnedTotalBase = toTotalBase({ primary: retSplit.primary, base: retSplit.base, factorToBase });
+      const remainingTotalBase       = Math.max(0, invoiceTotalBase - alreadyReturnedTotalBase);
+
+      const remainingSplit = splitRemainingByOriginalPattern({
+        remainingTotalBase,
+        soldPrimary,
+        soldBase,
+        factorToBase,
       });
 
-      const remainingTotalBase = Math.max(0, invoiceTotalBase - alreadyReturnedTotalBase);
-      const remainingSplit = splitFromTotalBase(remainingTotalBase, factorToBase);
-
-      const priceBase    = Number(line.sellingPriceBase ?? 0);
+      const priceBase    = Number(line.sellingPriceBase    ?? 0);
       const pricePrimary = Number(line.sellingPricePrimary ?? 0);
-      const discount     = Number(line.discountPerUnit ?? 0);
+      const discount     = Number(line.discountPerUnit     ?? 0);
 
-      // Restore existing edit quantities if provided
-      const editQty = existingQtyMap ? existingQtyMap.get(String(itemId)) : null;
+      const editQty          = existingQtyMap ? existingQtyMap.get(String(itemId)) : null;
       const returnBaseQty    = editQty ? editQty.base    : 0;
       const returnPrimaryQty = editQty ? editQty.primary : 0;
 
+      const editingBudgetTotalBase =
+        remainingTotalBase + toTotalBase({ primary: returnPrimaryQty, base: returnBaseQty, factorToBase });
+
+      const editingBudgetSplit = splitRemainingByOriginalPattern({
+        remainingTotalBase: editingBudgetTotalBase,
+        soldPrimary,
+        soldBase,
+        factorToBase,
+      });
+
       return {
         itemId,
-        itemName: line.item?.name || "",
+        itemName: line.item?.name    || "",
         itemCode: line.item?.itemCode || "",
 
-        invoiceBaseQty: soldBase,
+        invoiceBaseQty:    soldBase,
         invoicePrimaryQty: soldPrimary,
 
-        alreadyReturnedBaseQty: retSplit.base,
+        alreadyReturnedBaseQty:    retSplit.base,
         alreadyReturnedPrimaryQty: retSplit.primary,
 
-        maxReturnBaseQty: remainingSplit.base + returnBaseQty,       // include this return's own qty
-        maxReturnPrimaryQty: remainingSplit.primary + returnPrimaryQty,
+        maxReturnBaseQty:    editingBudgetSplit.base,
+        maxReturnPrimaryQty: editingBudgetSplit.primary,
 
         returnBaseQty,
         returnPrimaryQty,
 
-        sellingPriceBase: priceBase,
+        sellingPriceBase:    priceBase,
         sellingPricePrimary: pricePrimary,
-        discountPerUnit: discount,
+        discountPerUnit:     discount,
 
         baseUom,
         primaryUom,
@@ -392,12 +413,15 @@ const SalesReturnCreateModal = ({
 
         soldLabel: formatQtySplit(soldBase, soldPrimary, baseUom, primaryUom),
 
-        // Remaining = original remaining + this return's own qty (editable budget)
-        remainingTotalBase: remainingTotalBase + toTotalBase({ primary: returnPrimaryQty, base: returnBaseQty, factorToBase }),
-        remainingLabel: formatQtySplit(remainingSplit.base + returnBaseQty, remainingSplit.primary + returnPrimaryQty, baseUom, primaryUom),
-        hasAnyReturns: retSplit.base > 0 || retSplit.primary > 0,
-        isFullyReturned:
-          remainingTotalBase + toTotalBase({ primary: returnPrimaryQty, base: returnBaseQty, factorToBase }) <= 0,
+        remainingTotalBase: editingBudgetTotalBase,
+        remainingLabel:     formatQtySplit(
+          editingBudgetSplit.base,
+          editingBudgetSplit.primary,
+          baseUom,
+          primaryUom
+        ),
+        hasAnyReturns:   retSplit.base > 0 || retSplit.primary > 0,
+        isFullyReturned: editingBudgetTotalBase <= 0,
 
         lineTotal: computeReturnLineTotal(
           { sellingPriceBase: priceBase, sellingPricePrimary: pricePrimary, discountPerUnit: discount },
@@ -436,8 +460,8 @@ const SalesReturnCreateModal = ({
         }
       }
 
-      const returnedMap = buildAlreadyReturnedMap(invoice);
-      const mappedItems = mapInvoiceToFormItems(invoice, returnedMap);
+      const returnedMap  = buildAlreadyReturnedMap(invoice);
+      const mappedItems  = mapInvoiceToFormItems(invoice, returnedMap);
 
       setSourceInvoice(invoice);
       setForm((p) => ({
@@ -459,223 +483,281 @@ const SalesReturnCreateModal = ({
   };
 
   // ── Populate form for EDIT mode ─────────────────────────────────────────────
+  // FIX: getSalesReturn returns a shallow originalInvoice {_id, invoiceNo} with no items[].
+  // We must always fetch the full invoice so UOM, sold qty, and remaining are correct.
   useEffect(() => {
     if (!show || !isEdit || !selectedReturn) return;
 
-    const originalInv =
-      typeof selectedReturn.originalInvoice === "object"
-        ? selectedReturn.originalInvoice
-        : null;
-
-    const returnDate = selectedReturn.returnDate
-      ? selectedReturn.returnDate.split("T")[0]
-      : new Date().toISOString().split("T")[0];
-
-    // Build a qty map of what this return currently has, per item
-    const currentQtyMap = new Map();
-    (selectedReturn.items || []).forEach((line) => {
-      const itemId = String(line.item?._id || line.item);
-      const { base, primary } = getReturnLineSplit(line);
-      currentQtyMap.set(itemId, { base, primary });
-    });
-
-    // If we have the full invoice object, build items from it (best accuracy)
-    if (originalInv?.items?.length) {
-      const returnedMap = buildAlreadyReturnedMap(originalInv, selectedReturn._id);
-      const mappedItems = mapInvoiceToFormItems(originalInv, returnedMap, currentQtyMap);
-
-      const total =
-        typeof selectedReturn.totalReturnValue === "number"
-          ? selectedReturn.totalReturnValue
-          : mappedItems.reduce((sum, i) => sum + (Number(i.lineTotal) || 0), 0);
-
-      setSourceInvoice(originalInv);
-      setTotalValue(total);
-      setForm({
-        returnNo: selectedReturn.returnNo || generateReturnNo(),
-        branch: selectedReturn.branch?._id || "",
-        customer: selectedReturn.customer?._id || "",
-        salesRep:
-          originalInv?.salesRep?._id ||
-          originalInv?.salesRep ||
-          selectedReturn?.salesRep?._id ||
-          selectedReturn?.salesRep || "",
-        originalInvoice: originalInv?._id || "",
-        returnDate,
-        items: mappedItems,
-        remarks: selectedReturn.remarks || "",
-      });
-    } else {
-      // Fallback: build rows purely from the return's own items
-      const mappedItems = (selectedReturn.items || []).map((line) => {
-        const itemId = line.item?._id || line.item;
-        const priceBase    = Number(line.sellingPriceBase ?? 0);
-        const pricePrimary = Number(line.sellingPricePrimary ?? 0);
-        const discount     = Number(line.discountPerUnit ?? 0);
-        const { base: retBase, primary: retPrimary } = getReturnLineSplit(line);
-        const baseUom    = line.baseUom || "";
-        const primaryUom = line.primaryUom || "";
-        const factorToBase = Number(line.factorToBase) || 1;
-        const lineTotal = Number(line.totalSellingValue) ||
-          computeReturnLineTotal(line, retBase, retPrimary);
-
-        return {
-          itemId,
-          itemName: line.item?.name || "",
-          itemCode: line.item?.itemCode || "",
-          invoiceBaseQty: 0,
-          invoicePrimaryQty: 0,
-          alreadyReturnedBaseQty: 0,
-          alreadyReturnedPrimaryQty: 0,
-          maxReturnBaseQty: retBase,
-          maxReturnPrimaryQty: retPrimary,
-          returnBaseQty: retBase,
-          returnPrimaryQty: retPrimary,
-          sellingPriceBase: priceBase,
-          sellingPricePrimary: pricePrimary,
-          discountPerUnit: discount,
-          baseUom,
-          primaryUom,
-          factorToBase,
-          soldLabel: "-",
-          remainingTotalBase: toTotalBase({ primary: retPrimary, base: retBase, factorToBase }),
-          remainingLabel: formatQtySplit(retBase, retPrimary, baseUom, primaryUom),
-          hasAnyReturns: false,
-          isFullyReturned: false,
-          lineTotal,
-        };
-      });
-
-      const total =
-        typeof selectedReturn.totalReturnValue === "number"
-          ? selectedReturn.totalReturnValue
-          : mappedItems.reduce((sum, i) => sum + (Number(i.lineTotal) || 0), 0);
-
-      setSourceInvoice(originalInv);
-      setTotalValue(total);
-      setForm({
-        returnNo: selectedReturn.returnNo || generateReturnNo(),
-        branch: selectedReturn.branch?._id || "",
-        customer: selectedReturn.customer?._id || "",
-        salesRep:
-          selectedReturn?.salesRep?._id || selectedReturn?.salesRep || "",
-        originalInvoice:
+    (async () => {
+      setLoading(true);
+      try {
+        // Resolve the invoice ID regardless of whether it's an object or a string
+        let originalInv =
           typeof selectedReturn.originalInvoice === "object"
-            ? selectedReturn.originalInvoice?._id
-            : selectedReturn.originalInvoice || "",
-        returnDate,
-        items: mappedItems,
-        remarks: selectedReturn.remarks || "",
-      });
-    }
+            ? selectedReturn.originalInvoice
+            : null;
+
+        const invoiceId = originalInv?._id || selectedReturn.originalInvoice;
+
+        // Always fetch the full invoice for EDIT — we need items[], returns[], UOM data
+        if (invoiceId && (!originalInv?.items || !originalInv.items.length)) {
+          try {
+            originalInv = await getSalesInvoice(invoiceId);
+          } catch (err) {
+            console.error("Failed to fetch full invoice for edit:", err);
+          }
+        }
+
+        const returnDate = selectedReturn.returnDate
+          ? selectedReturn.returnDate.split("T")[0]
+          : new Date().toISOString().split("T")[0];
+
+        // Build a map of quantities in THIS return so we can pre-fill inputs
+        const currentQtyMap = new Map();
+        (selectedReturn.items || []).forEach((line) => {
+          const itemId = String(line.item?._id || line.item);
+          const { base, primary } = getReturnLineSplit(line);
+          currentQtyMap.set(itemId, { base, primary });
+        });
+
+        if (originalInv?.items?.length) {
+          // Full invoice available — use mapInvoiceToFormItems for correct UOM/remaining
+          const returnedMap = buildAlreadyReturnedMap(originalInv, selectedReturn._id);
+          const mappedItems = mapInvoiceToFormItems(originalInv, returnedMap, currentQtyMap);
+
+          const total =
+            typeof selectedReturn.totalReturnValue === "number"
+              ? selectedReturn.totalReturnValue
+              : mappedItems.reduce((sum, i) => sum + (Number(i.lineTotal) || 0), 0);
+
+          setSourceInvoice(originalInv);
+          setTotalValue(total);
+          setForm({
+            returnNo: selectedReturn.returnNo || generateReturnNo(),
+            branch:   selectedReturn.branch?._id  || "",
+            customer: selectedReturn.customer?._id || "",
+            salesRep:
+              originalInv?.salesRep?._id ||
+              originalInv?.salesRep ||
+              selectedReturn?.salesRep?._id ||
+              selectedReturn?.salesRep || "",
+            originalInvoice: originalInv?._id || String(invoiceId) || "",
+            returnDate,
+            items:   mappedItems,
+            remarks: selectedReturn.remarks || "",
+          });
+        } else {
+          // Fallback: invoice fetch failed — build rows from the return's own items.
+          // UOM pattern detection won't be perfect but at least quantities are correct.
+          const mappedItems = (selectedReturn.items || []).map((line) => {
+            const itemId       = line.item?._id || line.item;
+            const priceBase    = Number(line.sellingPriceBase    ?? 0);
+            const pricePrimary = Number(line.sellingPricePrimary ?? 0);
+            const discount     = Number(line.discountPerUnit     ?? 0);
+            const { base: retBase, primary: retPrimary } = getReturnLineSplit(line);
+            const baseUom      = line.baseUom    || "";
+            const primaryUom   = line.primaryUom || "";
+            const factorToBase = Number(line.factorToBase) || 1;
+            const lineTotal    = Number(line.totalSellingValue) ||
+              computeReturnLineTotal(line, retBase, retPrimary);
+            const remainingBase = toTotalBase({ primary: retPrimary, base: retBase, factorToBase });
+
+            return {
+              itemId,
+              itemName: line.item?.name     || "",
+              itemCode: line.item?.itemCode || "",
+              invoiceBaseQty:    retBase,    // best guess from return data
+              invoicePrimaryQty: retPrimary,
+              alreadyReturnedBaseQty:    0,
+              alreadyReturnedPrimaryQty: 0,
+              maxReturnBaseQty:    retBase,
+              maxReturnPrimaryQty: retPrimary,
+              returnBaseQty:    retBase,
+              returnPrimaryQty: retPrimary,
+              sellingPriceBase:    priceBase,
+              sellingPricePrimary: pricePrimary,
+              discountPerUnit:     discount,
+              baseUom,
+              primaryUom,
+              factorToBase,
+              soldLabel:          "-",
+              remainingTotalBase: remainingBase,
+              remainingLabel:     formatQtySplit(retBase, retPrimary, baseUom, primaryUom),
+              hasAnyReturns:   false,
+              isFullyReturned: false,
+              lineTotal,
+            };
+          });
+
+          const total =
+            typeof selectedReturn.totalReturnValue === "number"
+              ? selectedReturn.totalReturnValue
+              : mappedItems.reduce((sum, i) => sum + (Number(i.lineTotal) || 0), 0);
+
+          setSourceInvoice(originalInv);
+          setTotalValue(total);
+          setForm({
+            returnNo: selectedReturn.returnNo || generateReturnNo(),
+            branch:   selectedReturn.branch?._id  || "",
+            customer: selectedReturn.customer?._id || "",
+            salesRep: selectedReturn?.salesRep?._id || selectedReturn?.salesRep || "",
+            originalInvoice: String(invoiceId) || "",
+            returnDate,
+            items:   mappedItems,
+            remarks: selectedReturn.remarks || "",
+          });
+        }
+      } catch (err) {
+        console.error("❌ Failed to build edit form:", err);
+        toast.error("Failed to load sales return for editing.");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [show, isEdit, selectedReturn]);
 
   // ── Populate form for VIEW mode ─────────────────────────────────────────────
+  // FIX: getSalesReturn returns a shallow originalInvoice {_id, invoiceNo} only.
+  // We must fetch the full invoice to get items[], returns[], and correct sold/remaining quantities.
   useEffect(() => {
     if (!show || !isView || !selectedReturn) return;
 
-    const originalInv =
-      typeof selectedReturn.originalInvoice === "object"
-        ? selectedReturn.originalInvoice
-        : null;
+    (async () => {
+      setLoading(true);
+      try {
+        // Resolve originalInvoice — may be a shallow object or just an ID string
+        let originalInv =
+          typeof selectedReturn.originalInvoice === "object"
+            ? selectedReturn.originalInvoice
+            : null;
 
-    const buildReturnedMap = (inv) => {
-      const map = new Map();
-      if (!inv?.returns) return map;
-      inv.returns.forEach((ret) => {
-        (ret.items || []).forEach((it) => {
-          const key = String(it.item?._id || it.item);
-          const { base, primary } = getReturnLineSplit(it);
-          const prev = map.get(key) || { base: 0, primary: 0 };
-          map.set(key, { base: prev.base + base, primary: prev.primary + primary });
+        // If we don't have the full invoice data (items array is missing/empty), fetch it
+        const invoiceId = originalInv?._id || selectedReturn.originalInvoice;
+        if (invoiceId && (!originalInv?.items || !originalInv.items.length)) {
+          try {
+            originalInv = await getSalesInvoice(invoiceId);
+          } catch (err) {
+            console.error("Failed to load full invoice for view:", err);
+            // Continue with what we have — display will be degraded but won't crash
+          }
+        }
+
+        // Build a map of ALL quantities returned against this invoice (across all returns)
+        const buildReturnedMap = (inv) => {
+          const map = new Map();
+          if (!inv?.returns) return map;
+          inv.returns.forEach((ret) => {
+            (ret.items || []).forEach((it) => {
+              const key = String(it.item?._id || it.item);
+              const { base, primary } = getReturnLineSplit(it);
+              const prev = map.get(key) || { base: 0, primary: 0 };
+              map.set(key, { base: prev.base + base, primary: prev.primary + primary });
+            });
+          });
+          return map;
+        };
+
+        const returnedMap = buildReturnedMap(originalInv);
+
+        const mappedItems = (selectedReturn.items || []).map((line) => {
+          const itemId       = line.item?._id || line.item;
+          const priceBase    = Number(line.sellingPriceBase    ?? 0);
+          const pricePrimary = Number(line.sellingPricePrimary ?? 0);
+          const discount     = Number(line.discountPerUnit     ?? 0);
+          const retSplit     = getReturnLineSplit(line);
+
+          // Find the matching line in the full invoice to get sold quantities and UOM info
+          const invLine = originalInv?.items?.find(
+            (x) => String(x.item?._id || x.item) === String(itemId)
+          );
+          const { base: soldBase, primary: soldPrimary } = invLine
+            ? getInvoiceLineSoldSplit(invLine)
+            : { base: 0, primary: 0 };
+
+          const totalReturnedForItem = returnedMap.get(String(itemId)) || { base: 0, primary: 0 };
+
+          const baseUom    = invLine?.baseUom    || invLine?.item?.baseUom    || invLine?.item?.baseUomName    || line.baseUom    || "";
+          const primaryUom = invLine?.primaryUom || invLine?.item?.primaryUom || invLine?.item?.primaryUomName || line.primaryUom || "";
+          const factorToBase = Number(invLine?.factorToBase) || Number(invLine?.item?.factorToBase) || Number(line.factorToBase) || 1;
+
+          const soldTotalBase      = toTotalBase({ primary: soldPrimary, base: soldBase, factorToBase });
+          const returnedTotalBase  = toTotalBase({ primary: totalReturnedForItem.primary, base: totalReturnedForItem.base, factorToBase });
+          const remainingTotalBase = Math.max(0, soldTotalBase - returnedTotalBase);
+
+          const remainingSplit = splitRemainingByOriginalPattern({
+            remainingTotalBase,
+            soldPrimary,
+            soldBase,
+            factorToBase,
+          });
+
+          const lineTotal = Number(line.totalSellingValue) ||
+            computeReturnLineTotal(line, retSplit.base, retSplit.primary);
+
+          return {
+            itemId,
+            itemName: line.item?.name     || "",
+            itemCode: line.item?.itemCode || "",
+            invoiceBaseQty:    soldBase,
+            invoicePrimaryQty: soldPrimary,
+            alreadyReturnedBaseQty:    totalReturnedForItem.base,
+            alreadyReturnedPrimaryQty: totalReturnedForItem.primary,
+            maxReturnBaseQty:    remainingSplit.base,
+            maxReturnPrimaryQty: remainingSplit.primary,
+            returnBaseQty:    retSplit.base,
+            returnPrimaryQty: retSplit.primary,
+            sellingPriceBase:    priceBase,
+            sellingPricePrimary: pricePrimary,
+            discountPerUnit:     discount,
+            baseUom,
+            primaryUom,
+            factorToBase,
+            soldLabel: formatQtySplit(soldBase, soldPrimary, baseUom, primaryUom),
+            remainingTotalBase,
+            remainingLabel: formatQtySplit(remainingSplit.base, remainingSplit.primary, baseUom, primaryUom),
+            hasAnyReturns:   totalReturnedForItem.base > 0 || totalReturnedForItem.primary > 0,
+            isFullyReturned: remainingTotalBase <= 0,
+            lineTotal,
+          };
         });
-      });
-      return map;
-    };
 
-    const returnedMap = buildReturnedMap(originalInv);
+        const returnDate = selectedReturn.returnDate
+          ? selectedReturn.returnDate.split("T")[0]
+          : new Date().toISOString().split("T")[0];
 
-    const mappedItems = (selectedReturn.items || []).map((line) => {
-      const itemId       = line.item?._id || line.item;
-      const priceBase    = Number(line.sellingPriceBase ?? 0);
-      const pricePrimary = Number(line.sellingPricePrimary ?? 0);
-      const discount     = Number(line.discountPerUnit ?? 0);
-      const retSplit     = getReturnLineSplit(line);
+        setForm({
+          returnNo: selectedReturn.returnNo || generateReturnNo(),
+          branch:   selectedReturn.branch?._id  || "",
+          customer: selectedReturn.customer?._id || "",
+          salesRep:
+            originalInv?.salesRep?._id ||
+            originalInv?.salesRep ||
+            selectedReturn?.salesRep?._id ||
+            selectedReturn?.salesRep || "",
+          originalInvoice: originalInv?._id || (
+            typeof selectedReturn.originalInvoice === "object"
+              ? selectedReturn.originalInvoice?._id
+              : selectedReturn.originalInvoice
+          ) || "",
+          returnDate,
+          items:   mappedItems,
+          remarks: selectedReturn.remarks || "",
+        });
 
-      const invLine = originalInv?.items?.find(
-        (x) => String(x.item?._id || x.item) === String(itemId)
-      );
-      const { base: soldBase, primary: soldPrimary } = invLine
-        ? getInvoiceLineSoldSplit(invLine)
-        : { base: 0, primary: 0 };
+        const total =
+          typeof selectedReturn.totalReturnValue === "number"
+            ? selectedReturn.totalReturnValue
+            : mappedItems.reduce((sum, i) => sum + (Number(i.lineTotal) || 0), 0);
 
-      const totalReturnedForItem = returnedMap.get(String(itemId)) || { base: 0, primary: 0 };
-
-      const baseUom = invLine?.baseUom || invLine?.item?.baseUom || invLine?.item?.baseUomName || line.baseUom || "";
-      const primaryUom = invLine?.primaryUom || invLine?.item?.primaryUom || invLine?.item?.primaryUomName || line.primaryUom || "";
-      const factorToBase = Number(invLine?.factorToBase) || Number(invLine?.item?.factorToBase) || Number(line.factorToBase) || 1;
-
-      const soldTotalBase     = toTotalBase({ primary: soldPrimary, base: soldBase, factorToBase });
-      const returnedTotalBase = toTotalBase({ primary: totalReturnedForItem.primary, base: totalReturnedForItem.base, factorToBase });
-      const remainingTotalBase = Math.max(0, soldTotalBase - returnedTotalBase);
-      const remainingSplit = splitFromTotalBase(remainingTotalBase, factorToBase);
-
-      const lineTotal = Number(line.totalSellingValue) ||
-        computeReturnLineTotal(line, retSplit.base, retSplit.primary);
-
-      return {
-        itemId,
-        itemName: line.item?.name || "",
-        itemCode: line.item?.itemCode || "",
-        invoiceBaseQty: soldBase,
-        invoicePrimaryQty: soldPrimary,
-        alreadyReturnedBaseQty: totalReturnedForItem.base,
-        alreadyReturnedPrimaryQty: totalReturnedForItem.primary,
-        maxReturnBaseQty: remainingSplit.base,
-        maxReturnPrimaryQty: remainingSplit.primary,
-        returnBaseQty: retSplit.base,
-        returnPrimaryQty: retSplit.primary,
-        sellingPriceBase: priceBase,
-        sellingPricePrimary: pricePrimary,
-        discountPerUnit: discount,
-        baseUom,
-        primaryUom,
-        factorToBase,
-        soldLabel: formatQtySplit(soldBase, soldPrimary, baseUom, primaryUom),
-        remainingTotalBase,
-        remainingLabel: formatQtySplit(remainingSplit.base, remainingSplit.primary, baseUom, primaryUom),
-        hasAnyReturns: totalReturnedForItem.base > 0 || totalReturnedForItem.primary > 0,
-        isFullyReturned: remainingTotalBase <= 0,
-        lineTotal,
-      };
-    });
-
-    const returnDate = selectedReturn.returnDate
-      ? selectedReturn.returnDate.split("T")[0]
-      : new Date().toISOString().split("T")[0];
-
-    setForm({
-      returnNo: selectedReturn.returnNo || generateReturnNo(),
-      branch: selectedReturn.branch?._id || "",
-      customer: selectedReturn.customer?._id || "",
-      salesRep:
-        originalInv?.salesRep?._id ||
-        originalInv?.salesRep ||
-        selectedReturn?.salesRep?._id ||
-        selectedReturn?.salesRep || "",
-      originalInvoice: originalInv?._id || "",
-      returnDate,
-      items: mappedItems,
-      remarks: selectedReturn.remarks || "",
-    });
-
-    const total =
-      typeof selectedReturn.totalReturnValue === "number"
-        ? selectedReturn.totalReturnValue
-        : mappedItems.reduce((sum, i) => sum + (Number(i.lineTotal) || 0), 0);
-
-    setTotalValue(total);
-    setSourceInvoice(originalInv);
+        setTotalValue(total);
+        setSourceInvoice(originalInv);
+      } catch (err) {
+        console.error("❌ Failed to build view form:", err);
+        toast.error("Failed to load sales return details.");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [show, isView, selectedReturn]);
 
   // Access denied guard
@@ -714,8 +796,8 @@ const SalesReturnCreateModal = ({
       fontSize: "0.9rem",
     }),
     singleValue: (base) => ({ ...base, color: "#374151" }),
-    menu: (base) => ({ ...base, zIndex: 9999, borderRadius: 10, overflow: "hidden" }),
-    menuPortal: (base) => ({ ...base, zIndex: 9999 }),
+    menu:        (base) => ({ ...base, zIndex: 9999, borderRadius: 10, overflow: "hidden" }),
+    menuPortal:  (base) => ({ ...base, zIndex: 9999 }),
     option: (base, state) => ({
       ...base,
       backgroundColor: state.isFocused ? "#f3ecff" : "#fff",
@@ -750,7 +832,7 @@ const SalesReturnCreateModal = ({
     }
 
     const hasInvalidLines = validLines.some((i) => {
-      const base    = Number(i.returnBaseQty || 0);
+      const base    = Number(i.returnBaseQty    || 0);
       const primary = Number(i.returnPrimaryQty || 0);
       if (base    > 0 && Number(i.sellingPriceBase    || 0) <= 0) return true;
       if (primary > 0 && Number(i.sellingPricePrimary || 0) <= 0) return true;
@@ -764,7 +846,7 @@ const SalesReturnCreateModal = ({
 
     const payloadItems = validLines.map((i) => ({
       item: i.itemId,
-      qtyReturnBase: Number(i.returnBaseQty || 0),
+      qtyReturnBase:    Number(i.returnBaseQty    || 0),
       qtyReturnPrimary: Number(i.returnPrimaryQty || 0),
       sellingPriceBase:
         Number(i.sellingPriceBase || 0) > 0 ? Number(i.sellingPriceBase) : null,
@@ -777,34 +859,25 @@ const SalesReturnCreateModal = ({
     }));
 
     const payload = {
-      returnNo: form.returnNo,
-      branch: form.branch,
-      customer: form.customer,
+      returnNo:        form.returnNo,
+      branch:          form.branch,
+      customer:        form.customer,
       originalInvoice: form.originalInvoice || null,
-      returnDate: form.returnDate,
-      items: payloadItems,
-      remarks: form.remarks,
+      returnDate:      form.returnDate,
+      items:           payloadItems,
+      remarks:         form.remarks,
       totalReturnValue: totalValue,
     };
 
     try {
       setLoading(true);
-
       if (isEdit) {
-        // ── UPDATE existing return ──────────────────────────────────────────
         const res = await updateSalesReturn(selectedReturn._id, payload);
-        toast.success(
-          res?.message || `Sales Return ${form.returnNo} updated successfully`
-        );
+        toast.success(res?.message || `Sales Return ${form.returnNo} updated successfully`);
       } else {
-        // ── CREATE new return ───────────────────────────────────────────────
         const res = await createSalesReturn(payload);
-        toast.success(
-          res?.message ||
-            `Sales Return ${res?.salesReturn?.returnNo || form.returnNo} created successfully`
-        );
+        toast.success(res?.message || `Sales Return ${res?.salesReturn?.returnNo || form.returnNo} created successfully`);
       }
-
       onSuccess?.();
       onClose?.();
     } catch (err) {
@@ -823,8 +896,8 @@ const SalesReturnCreateModal = ({
     ? "Modify return quantities and details, then save."
     : "Record customer sales returns against existing invoices.";
 
-  const selectedBranchObj   = branches.find((b) => b._id === form.branch);
-  const selectedInvoiceObj  = invoices.find((inv) => inv._id === form.originalInvoice) || sourceInvoice || null;
+  const selectedBranchObj  = branches.find((b) => b._id === form.branch);
+  const selectedInvoiceObj = invoices.find((inv) => inv._id === form.originalInvoice) || sourceInvoice || null;
 
   const modeBadgeClass = isView
     ? "bg-light text-dark border"
@@ -847,10 +920,9 @@ const SalesReturnCreateModal = ({
       ? "bg-danger-subtle text-danger-emphasis border border-danger-subtle"
       : "bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle";
 
-  // In edit mode the invoice selector should be read-only (we don't allow
-  // switching the linked invoice after creation)
   const invoiceSelectDisabled = isView || isEdit || !form.branch || !form.customer;
 
+  // ─── Render ─────────────────────────────────────────────────────────────────
   return (
     <>
       <style>{`
@@ -922,15 +994,23 @@ const SalesReturnCreateModal = ({
           background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px;
           color: #92400e; font-size: 13px; font-weight: 500; margin-bottom: 12px;
         }
+        .is-invalid-qty {
+          border-color: #ef4444 !important;
+          box-shadow: 0 0 0 1px #ef4444 !important;
+          background-color: #fff8f8 !important;
+        }
+        .qty-inline-error {
+          display: flex; align-items: center; gap: 4px;
+          color: #dc2626; font-size: 10px; margin-top: 4px;
+          font-weight: 600; justify-content: flex-end;
+        }
+        .view-loading-overlay {
+          display: flex; align-items: center; justify-content: center;
+          padding: 40px; color: #6b7280; gap: 10px; font-size: 14px;
+        }
       `}</style>
 
-      <Modal
-        show={show}
-        onHide={onClose}
-        centered
-        backdrop="static"
-        dialogClassName="sales-return-create-modal"
-      >
+      <Modal show={show} onHide={onClose} centered backdrop="static" dialogClassName="sales-return-create-modal">
         <Modal.Header closeButton>
           <div className="d-flex justify-content-between align-items-start w-100 gap-3">
             <div>
@@ -964,9 +1044,15 @@ const SalesReturnCreateModal = ({
         </Modal.Header>
 
         <Modal.Body>
+          {/* Show loading overlay in VIEW/EDIT mode while fetching full invoice */}
+          {(isView || isEdit) && loading && !form.items.length ? (
+            <div className="view-loading-overlay">
+              <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
+              Loading return details…
+            </div>
+          ) : (
           <form onSubmit={handleSubmit}>
 
-            {/* Edit mode notice */}
             {isEdit && (
               <div className="edit-mode-notice">
                 <i className="bi bi-pencil-square" />
@@ -975,7 +1061,6 @@ const SalesReturnCreateModal = ({
               </div>
             )}
 
-            {/* Top helper warnings (CREATE only) */}
             {isCreate && !form.branch && (
               <div className="alert alert-info py-2 mb-3 d-flex align-items-center gap-2">
                 <i className="bi bi-info-circle" />
@@ -993,7 +1078,7 @@ const SalesReturnCreateModal = ({
               </div>
             )}
 
-            {/* ── Return Details ──────────────────────────────────────────────── */}
+            {/* Return Details */}
             <div className="invoice-section-card mb-3">
               <div className="invoice-section-title">
                 <i className="bi bi-arrow-counterclockwise" />
@@ -1009,11 +1094,7 @@ const SalesReturnCreateModal = ({
                       isDisabled={isView || isEdit}
                       isClearable={isCreate}
                       options={branches.map((b) => ({ label: b.name, value: b._id }))}
-                      value={
-                        form.branch
-                          ? { label: selectedBranchObj?.name || "", value: form.branch }
-                          : null
-                      }
+                      value={form.branch ? { label: selectedBranchObj?.name || selectedReturn?.branch?.name || "", value: form.branch } : null}
                       onChange={(opt) => {
                         const branchId = opt ? opt.value : "";
                         setForm((p) => ({ ...p, branch: branchId, originalInvoice: "", items: [] }));
@@ -1037,7 +1118,12 @@ const SalesReturnCreateModal = ({
                       isDisabled={isView || isEdit}
                       isClearable={isCreate}
                       options={customerOptions}
-                      value={selectedCustomerOption}
+                      value={
+                        selectedCustomerOption ||
+                        (form.customer && selectedReturn?.customer
+                          ? { label: selectedReturn.customer.name, value: form.customer }
+                          : null)
+                      }
                       onChange={(opt) => {
                         const customerId = opt ? opt.value : "";
                         setForm((p) => ({ ...p, customer: customerId, originalInvoice: "", items: [] }));
@@ -1062,7 +1148,19 @@ const SalesReturnCreateModal = ({
                         isDisabled={isView || isSalesRep || isEdit}
                         isClearable={!isSalesRep && isCreate}
                         options={salesRepOptions}
-                        value={selectedSalesRepOption}
+                        value={
+                          selectedSalesRepOption ||
+                          (form.salesRep && selectedReturn?.salesRep
+                            ? {
+                                label:
+                                  selectedReturn.salesRep?.name ||
+                                  selectedReturn.salesRep?.fullName ||
+                                  selectedReturn.salesRep?.email ||
+                                  "Sales Rep",
+                                value: form.salesRep,
+                              }
+                            : null)
+                        }
                         onChange={(opt) => {
                           if (isSalesRep) return;
                           setForm((p) => ({ ...p, salesRep: opt ? opt.value : "" }));
@@ -1088,9 +1186,7 @@ const SalesReturnCreateModal = ({
                       id="returnDateInput"
                       value={form.returnDate}
                       readOnly={isView}
-                      onChange={(e) =>
-                        !isView && setForm((p) => ({ ...p, returnDate: e.target.value }))
-                      }
+                      onChange={(e) => !isView && setForm((p) => ({ ...p, returnDate: e.target.value }))}
                     />
                     <label htmlFor="returnDateInput">Return Date</label>
                   </div>
@@ -1110,15 +1206,22 @@ const SalesReturnCreateModal = ({
                       value={
                         isView && selectedReturn?.originalInvoice
                           ? {
-                              label: selectedReturn.originalInvoice?.invoiceNo || "Original Invoice",
-                              value: selectedReturn.originalInvoice?._id || selectedReturn.originalInvoice,
+                              label:
+                                (typeof selectedReturn.originalInvoice === "object"
+                                  ? selectedReturn.originalInvoice?.invoiceNo
+                                  : null) ||
+                                sourceInvoice?.invoiceNo ||
+                                "Original Invoice",
+                              value:
+                                (typeof selectedReturn.originalInvoice === "object"
+                                  ? selectedReturn.originalInvoice?._id
+                                  : selectedReturn.originalInvoice) || "",
                             }
                           : form.originalInvoice
                           ? {
                               label:
                                 invoices.find((inv) => inv._id === form.originalInvoice)?.invoiceNo ||
-                                sourceInvoice?.invoiceNo ||
-                                "",
+                                sourceInvoice?.invoiceNo || "",
                               value: form.originalInvoice,
                             }
                           : null
@@ -1131,18 +1234,17 @@ const SalesReturnCreateModal = ({
                     <label>Original Invoice</label>
                   </div>
 
-                  {((isView && form.originalInvoice) || (!isView && sourceInvoice?._id)) &&
-                    onViewInvoice && (
-                      <button
-                        type="button"
-                        className="sr-link-btn mt-2"
-                        onClick={() => onViewInvoice(form.originalInvoice || sourceInvoice?._id)}
-                        title="View original invoice"
-                      >
-                        <i className="bi bi-box-arrow-up-right" />
-                        View Original Invoice
-                      </button>
-                    )}
+                  {((isView && form.originalInvoice) || (!isView && sourceInvoice?._id)) && onViewInvoice && (
+                    <button
+                      type="button"
+                      className="sr-link-btn mt-2"
+                      onClick={() => onViewInvoice(form.originalInvoice || sourceInvoice?._id)}
+                      title="View original invoice"
+                    >
+                      <i className="bi bi-box-arrow-up-right" />
+                      View Original Invoice
+                    </button>
+                  )}
                 </div>
 
                 {/* Remarks */}
@@ -1153,9 +1255,7 @@ const SalesReturnCreateModal = ({
                       style={{ minHeight: "70px" }}
                       value={form.remarks}
                       readOnly={isView}
-                      onChange={(e) =>
-                        !isView && setForm((p) => ({ ...p, remarks: e.target.value }))
-                      }
+                      onChange={(e) => !isView && setForm((p) => ({ ...p, remarks: e.target.value }))}
                       name="Remarks"
                       placeholder="Remarks"
                     />
@@ -1165,7 +1265,7 @@ const SalesReturnCreateModal = ({
               </div>
             </div>
 
-            {/* ── Items & Pricing ─────────────────────────────────────────────── */}
+            {/* Items & Pricing */}
             <div className="invoice-section-card mb-3">
               <div className="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
                 <div className="invoice-section-title mb-0">
@@ -1175,15 +1275,9 @@ const SalesReturnCreateModal = ({
 
                 {!!form.items.length && (
                   <div className="d-flex flex-wrap gap-2">
-                    <span className="sr-stat-inline">
-                      <i className="bi bi-list-ul" /> Lines: {returnStats.totalLines}
-                    </span>
-                    <span className="sr-stat-inline">
-                      <i className="bi bi-check2-circle" /> Returnable: {returnStats.returnableLines}
-                    </span>
-                    <span className="sr-stat-inline">
-                      <i className="bi bi-dash-circle" /> Exhausted: {returnStats.exhaustedLines}
-                    </span>
+                    <span className="sr-stat-inline"><i className="bi bi-list-ul" /> Lines: {returnStats.totalLines}</span>
+                    <span className="sr-stat-inline"><i className="bi bi-check2-circle" /> Returnable: {returnStats.returnableLines}</span>
+                    <span className="sr-stat-inline"><i className="bi bi-dash-circle" /> Exhausted: {returnStats.exhaustedLines}</span>
                   </div>
                 )}
               </div>
@@ -1205,16 +1299,19 @@ const SalesReturnCreateModal = ({
                   <tbody>
                     {form.items.length ? (
                       form.items.map((row, i) => {
-                        const factor            = Number(row.factorToBase || 1);
+                        const factor             = Number(row.factorToBase || 1);
                         const remainingTotalBase = Number(row.remainingTotalBase || 0);
-                        const isFullyReturned   = remainingTotalBase <= 0;
-                        const priceBase    = Number(row.sellingPriceBase || 0);
+                        const isFullyReturned    = row.isFullyReturned;
+                        const priceBase    = Number(row.sellingPriceBase    || 0);
                         const pricePrimary = Number(row.sellingPricePrimary || 0);
-                        const discount     = Number(row.discountPerUnit || 0);
+                        const discount     = Number(row.discountPerUnit     || 0);
                         const hasBaseUom   = !!row.baseUom;
 
-                        const disableBaseInput    = isView || isFullyReturned || !hasBaseUom;
-                        const disablePrimaryInput = isView || isFullyReturned;
+                        const soldInBaseOnly    = Number(row.invoiceBaseQty    || 0) > 0 && Number(row.invoicePrimaryQty || 0) === 0;
+                        const soldInPrimaryOnly = Number(row.invoicePrimaryQty || 0) > 0 && Number(row.invoiceBaseQty    || 0) === 0;
+
+                        const disableBaseInput    = isView || isFullyReturned || !hasBaseUom || soldInPrimaryOnly;
+                        const disablePrimaryInput = isView || isFullyReturned || soldInBaseOnly;
 
                         const currentBase    = Number(row.returnBaseQty    || 0);
                         const currentPrimary = Number(row.returnPrimaryQty || 0);
@@ -1236,14 +1333,12 @@ const SalesReturnCreateModal = ({
 
                               {!hasBaseUom && (
                                 <span className="invoice-muted-chip">
-                                  <i className="bi bi-info-circle me-1" />
-                                  Primary-only item
+                                  <i className="bi bi-info-circle me-1" />Primary-only item
                                 </span>
                               )}
                               {isFullyReturned && (
                                 <span className="invoice-muted-chip">
-                                  <i className="bi bi-check2-all me-1" />
-                                  Fully returned
+                                  <i className="bi bi-check2-all me-1" />Fully returned
                                 </span>
                               )}
                               {hasRowError && !isView && (
@@ -1252,9 +1347,7 @@ const SalesReturnCreateModal = ({
                                     <i className="bi bi-exclamation-triangle-fill" />
                                     {invalidBasePrice && invalidPrimaryPrice
                                       ? "Missing prices for selected quantities"
-                                      : invalidBasePrice
-                                      ? "Base price required"
-                                      : "Primary price required"}
+                                      : invalidBasePrice ? "Base price required" : "Primary price required"}
                                   </span>
                                 </div>
                               )}
@@ -1264,29 +1357,36 @@ const SalesReturnCreateModal = ({
                             <td>
                               <input
                                 type="number"
-                                className="form-control text-end"
+                                className={`form-control text-end${qtyErrors[`${i}-base`] ? " is-invalid-qty" : ""}`}
                                 value={hasBaseUom ? row.returnBaseQty : ""}
                                 readOnly={disableBaseInput}
                                 disabled={disableBaseInput}
                                 min={0}
-                                placeholder={hasBaseUom ? "" : "N/A"}
+                                placeholder={hasBaseUom ? "0" : "N/A"}
                                 style={!hasBaseUom ? { backgroundColor: "#f3f4f6" } : {}}
                                 onChange={(e) => {
                                   if (disableBaseInput) return;
                                   let val = Number(e.target.value || 0);
                                   if (val < 0 || Number.isNaN(val)) val = 0;
 
-                                  const newItems = [...form.items];
-                                  const cur = newItems[i];
+                                  const newItems   = [...form.items];
+                                  const cur        = newItems[i];
                                   const newPrimary = Number(cur.returnPrimaryQty || 0);
                                   const newTotalBase = newPrimary * factor + val;
+                                  const errKey = `${i}-base`;
 
                                   if (newTotalBase > remainingTotalBase) {
-                                    toast.warning(
-                                      `Total return cannot exceed ${remainingTotalBase} base units for ${row.itemCode || row.itemName || ""}.`
-                                    );
+                                    const maxBase = remainingTotalBase - newPrimary * factor;
+                                    const capped  = Math.max(0, maxBase);
+                                    setQtyErrors((prev) => ({
+                                      ...prev,
+                                      [errKey]: `Can't exceed ${capped} ${row.baseUom || "units"} remaining`,
+                                    }));
+                                    newItems[i] = { ...cur, returnBaseQty: capped, lineTotal: computeReturnLineTotal(cur, capped, newPrimary) };
+                                    setForm((p) => ({ ...p, items: newItems }));
                                     return;
                                   }
+                                  setQtyErrors((prev) => { const n = { ...prev }; delete n[errKey]; return n; });
                                   newItems[i] = {
                                     ...cur,
                                     returnBaseQty: val,
@@ -1295,33 +1395,48 @@ const SalesReturnCreateModal = ({
                                   setForm((p) => ({ ...p, items: newItems }));
                                 }}
                               />
+                              {qtyErrors[`${i}-base`] && (
+                                <div className="qty-inline-error">
+                                  <i className="bi bi-exclamation-circle-fill" />
+                                  {qtyErrors[`${i}-base`]}
+                                </div>
+                              )}
                             </td>
 
                             {/* Return Qty Primary */}
                             <td>
                               <input
                                 type="number"
-                                className="form-control text-end"
-                                value={row.returnPrimaryQty}
+                                className={`form-control text-end${qtyErrors[`${i}-primary`] ? " is-invalid-qty" : ""}`}
+                                value={soldInBaseOnly ? "" : row.returnPrimaryQty}
                                 readOnly={disablePrimaryInput}
                                 disabled={disablePrimaryInput}
                                 min={0}
+                                placeholder={soldInBaseOnly ? "N/A" : "0"}
+                                style={soldInBaseOnly ? { backgroundColor: "#f3f4f6" } : {}}
                                 onChange={(e) => {
                                   if (disablePrimaryInput) return;
                                   let val = Number(e.target.value || 0);
                                   if (val < 0 || Number.isNaN(val)) val = 0;
 
                                   const newItems = [...form.items];
-                                  const cur = newItems[i];
-                                  const newBase = Number(cur.returnBaseQty || 0);
+                                  const cur      = newItems[i];
+                                  const newBase  = Number(cur.returnBaseQty || 0);
                                   const newTotalBase = val * factor + newBase;
+                                  const errKey = `${i}-primary`;
 
                                   if (newTotalBase > remainingTotalBase) {
-                                    toast.warning(
-                                      `Total return cannot exceed ${remainingTotalBase} base units for ${row.itemCode || row.itemName || ""}.`
-                                    );
+                                    const maxPrimary = Math.floor((remainingTotalBase - newBase) / factor);
+                                    const capped     = Math.max(0, maxPrimary);
+                                    setQtyErrors((prev) => ({
+                                      ...prev,
+                                      [errKey]: `Can't exceed ${capped} ${row.primaryUom || "units"} remaining`,
+                                    }));
+                                    newItems[i] = { ...cur, returnPrimaryQty: capped, lineTotal: computeReturnLineTotal(cur, newBase, capped) };
+                                    setForm((p) => ({ ...p, items: newItems }));
                                     return;
                                   }
+                                  setQtyErrors((prev) => { const n = { ...prev }; delete n[errKey]; return n; });
                                   newItems[i] = {
                                     ...cur,
                                     returnPrimaryQty: val,
@@ -1330,11 +1445,15 @@ const SalesReturnCreateModal = ({
                                   setForm((p) => ({ ...p, items: newItems }));
                                 }}
                               />
+                              {qtyErrors[`${i}-primary`] && (
+                                <div className="qty-inline-error">
+                                  <i className="bi bi-exclamation-circle-fill" />
+                                  {qtyErrors[`${i}-primary`]}
+                                </div>
+                              )}
                             </td>
 
-                            <td className="text-end pt-3">
-                              {hasBaseUom ? formatCurrency(priceBase) : "-"}
-                            </td>
+                            <td className="text-end pt-3">{hasBaseUom ? formatCurrency(priceBase) : "-"}</td>
                             <td className="text-end pt-3">{formatCurrency(pricePrimary)}</td>
                             <td className="text-end pt-3">{discount > 0 ? formatCurrency(discount) : "-"}</td>
                             <td className="text-end pt-3 fw-bold">{formatCurrency(Number(row.lineTotal || 0))}</td>
@@ -1344,7 +1463,9 @@ const SalesReturnCreateModal = ({
                     ) : (
                       <tr>
                         <td colSpan={7} className="text-center text-muted py-3">
-                          {isCreate
+                          {loading
+                            ? "Loading items…"
+                            : isCreate
                             ? "Select branch, customer, and an approved invoice to load items."
                             : "No items to display."}
                         </td>
@@ -1360,13 +1481,11 @@ const SalesReturnCreateModal = ({
                   <div className="small text-muted">
                     {returnStats.totalLines || 0} line{returnStats.totalLines !== 1 ? "s" : ""} •{" "}
                     Selected: {returnStats.selectedLines || 0} • Date: {formatDisplayDate(form.returnDate)} •{" "}
-                    Branch: {selectedBranchObj?.name || "-"}
+                    Branch: {selectedBranchObj?.name || selectedReturn?.branch?.name || "-"}
                   </div>
                   <div className="d-flex align-items-center gap-3">
                     <div className="text-end">
-                      <div className="small text-muted">
-                        {isView ? "Refund Total" : "Selected Refund"}
-                      </div>
+                      <div className="small text-muted">{isView ? "Refund Total" : "Selected Refund"}</div>
                       <div className="fw-bold" style={{ fontSize: "1rem", color: "#111827" }}>
                         {formatCurrency(totalValue)}
                       </div>
@@ -1376,7 +1495,7 @@ const SalesReturnCreateModal = ({
               </div>
             </div>
 
-            {/* ── Sticky footer ───────────────────────────────────────────────── */}
+            {/* Sticky footer */}
             <div className="invoice-footer-bar">
               <div className="d-flex justify-content-end align-items-center flex-wrap gap-2">
                 {isEditable && (
@@ -1384,35 +1503,21 @@ const SalesReturnCreateModal = ({
                     type="submit"
                     className="action-btn-modal"
                     disabled={loading || !hasAtLeastOneReturnQty}
-                    title={
-                      !hasAtLeastOneReturnQty
-                        ? "Enter at least one return quantity"
-                        : isEdit
-                        ? "Save Changes"
-                        : "Create Sales Return"
-                    }
+                    title={!hasAtLeastOneReturnQty ? "Enter at least one return quantity" : isEdit ? "Save Changes" : "Create Sales Return"}
                   >
                     {loading ? (
-                      <>
-                        <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />
-                        Saving...
-                      </>
+                      <><span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true" />Saving...</>
                     ) : isEdit ? (
-                      <>
-                        <i className="bi bi-floppy me-2" />
-                        Save Changes
-                      </>
+                      <><i className="bi bi-floppy me-2" />Save Changes</>
                     ) : (
-                      <>
-                        <i className="bi bi-plus-circle me-2" />
-                        Create Sales Return
-                      </>
+                      <><i className="bi bi-plus-circle me-2" />Create Sales Return</>
                     )}
                   </Button>
                 )}
               </div>
             </div>
           </form>
+          )}
         </Modal.Body>
 
         <ToastContainer position="top-right" autoClose={2000} />

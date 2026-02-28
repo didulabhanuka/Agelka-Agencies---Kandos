@@ -30,11 +30,11 @@ const staffOrAdmin = [verifyJWT, requireRole("Admin", "DataEntry")];
 
 // Users
 router
-  .post("/create-user", ...adminOnly, createUserRules, handleValidation, asyncHandler(userCtrl.userCreate))
-  .get("/users", ...adminOnly, asyncHandler(userCtrl.list))
-  .get("/users/:id", ...adminOnly, userIdParam, handleValidation, asyncHandler(userCtrl.get))
-  .put("/users/:id", ...adminOnly, userIdParam, handleValidation, asyncHandler(userCtrl.update))
-  .delete("/users/:id", ...adminOnly, userIdParam, handleValidation, asyncHandler(userCtrl.remove));
+  .post("/create-user", ...staffOrAdmin, createUserRules, handleValidation, asyncHandler(userCtrl.userCreate))
+  .get("/users", ...staffOrAdmin, asyncHandler(userCtrl.list))
+  .get("/users/:id", ...staffOrAdmin, userIdParam, handleValidation, asyncHandler(userCtrl.get))
+  .put("/users/:id", ...staffOrAdmin, userIdParam, handleValidation, asyncHandler(userCtrl.update))
+  .delete("/users/:id", ...staffOrAdmin, userIdParam, handleValidation, asyncHandler(userCtrl.remove));
 
 // Suppliers
 router
