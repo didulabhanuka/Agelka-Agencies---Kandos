@@ -12,8 +12,15 @@ env:
   RESOURCE_GROUP: agelka-rg
   CONTAINER_ENV: agelka-env
 
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 🔧 MAINTENANCE MODE
+  # Set to "true"  → users see the maintenance page
+  # Set to "false" → users see the normal app
+  # ──────────────────────────────────────────────────────────────────────────────
+  MAINTENANCE_MODE: "false"
+
 jobs:
-  # ── Job 1: Build & Push Docker Images ───────────────────────────
+  # ── Job 1: Build & Push Docker Images ───────────────────────────────────────
   build:
     name: 🐳 Build & Push Images
     runs-on: ubuntu-latest
@@ -51,8 +58,9 @@ jobs:
             ${{ env.ACR_REGISTRY }}/${{ env.FRONTEND_IMAGE }}:${{ github.sha }}
           build-args: |
             VITE_API_BASE_URL=https://agelka-server.victoriousdesert-2974c53b.eastus.azurecontainerapps.io/api
+            MAINTENANCE_MODE=${{ env.MAINTENANCE_MODE }}
 
-  # ── Job 2: Deploy to Azure Container Apps ───────────────────────
+  # ── Job 2: Deploy to Azure Container Apps ───────────────────────────────────
   deploy:
     name: ☁️ Deploy to Azure
     runs-on: ubuntu-latest
@@ -91,6 +99,7 @@ jobs:
                   NODE_ENV=production \
                   PORT=5000 \
                   MONGODB_URI="${{ secrets.MONGODB_URI }}" \
+                  MONGODB_URI_HISTORY="${{ secrets.MONGODB_URI_HISTORY }}" \
                   JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}" \
                   JWT_REFRESH_SECRET_KEY="${{ secrets.JWT_REFRESH_SECRET_KEY }}" \
                   JWT_EXPIRATION="${{ secrets.JWT_EXPIRATION }}" \
@@ -159,3 +168,9 @@ jobs:
             echo "🎉 Deployment complete!"
             echo "🖥️  Frontend: https://$FRONTEND_URL"
             echo "⚙️  Backend:  https://$BACKEND_URL"
+            echo ""
+            if [ "${{ env.MAINTENANCE_MODE }}" = "true" ]; then
+              echo "🔧 MAINTENANCE MODE IS ON — users see the maintenance page"
+            else
+              echo "✅ App is live and serving normally"
+            fi
