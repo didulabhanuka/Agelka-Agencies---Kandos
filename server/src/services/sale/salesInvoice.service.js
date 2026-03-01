@@ -4,6 +4,7 @@ const SalesInvoice = require("../../models/sale/SalesInvoice.model");
 const Branch = require("../../models/inventorySettings/branch.model");
 const Item = require("../../models/inventory/item.model");
 const Customer = require("../../models/user/customer.model");
+const SalesRep = require("../../models/user/salesRep.model");
 const CustomerPayment = require("../../models/finance/customerPayment.model");
 const SalesRepStock = require("../../models/inventory/salesRepStock.model");
 const { getCurrentStock, postLedger } = require("../ledger/stockLedger.service");
@@ -372,6 +373,11 @@ async function approveInvoice(id, userId) {
 
     await updateCustomerCreditStatus(invoice.customer);
     await Customer.findByIdAndUpdate(invoice.customer, { $addToSet: { saleInvoices: invoice._id } });
+
+    // Mirror the approved invoice reference on the sales rep record (if assigned).
+    if (invoice.salesRep) {
+      await SalesRep.findByIdAndUpdate(invoice.salesRep, { $addToSet: { salesInvoices: invoice._id } });
+    }
 
     return invoice.toObject();
   } catch (err) {

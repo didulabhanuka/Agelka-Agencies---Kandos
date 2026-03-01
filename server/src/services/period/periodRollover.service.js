@@ -1,3 +1,12 @@
+/**
+ * Period Rollover Service
+ * server/src/services/period/periodRollover.service.js
+ *
+ * - Archives data BY DATE RANGE (fromDate → toDate) into agelka-history-db
+ * - Idempotent — safe to re-run if it fails midway
+ * - Works on MongoDB Atlas Flex tier (no transactions needed)
+ */
+
 // ── Current period models (agelka-db) ────────────────────────────
 const SalesInvoice    = require('../../models/sale/SalesInvoice.model');
 const SalesReturn     = require('../../models/sale/SalesReturn.model');
@@ -23,8 +32,10 @@ const StockLedgerHistory     = require('../../models/history/StockLedgerHistory.
 // ── Period tracker (agelka-db) ───────────────────────────────────
 const Period = require('../../models/period/Period.model');
 
-
+// ─────────────────────────────────────────────────────────────────
 // Date range helpers
+// ─────────────────────────────────────────────────────────────────
+
 const buildDateFilter = (dateField, fromDate, toDate) => {
   if (!fromDate && !toDate) return {};
   const filter = {};
@@ -37,9 +48,17 @@ const buildDateFilter = (dateField, fromDate, toDate) => {
   return { [dateField]: filter };
 };
 
+// ─────────────────────────────────────────────────────────────────
 // Core archive helpers
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Archive documents from source → history collection.
+ * dateField = null means no date filter (e.g. SalesRepStock).
+ * Idempotent — skips docs already archived for this period.
+ */
 const archiveCollection = async (SourceModel, HistoryModel, periodLabel, dateField, fromDate, toDate, collectionName) => {
-  const query = buildDateFilter(dateField, fromDate, toDate);
+  const query = dateField ? buildDateFilter(dateField, fromDate, toDate) : {};
   const docs = await SourceModel.find(query).lean();
 
   if (!docs.length) {
@@ -47,7 +66,6 @@ const archiveCollection = async (SourceModel, HistoryModel, periodLabel, dateFie
     return 0;
   }
 
-  // Check which are already archived (idempotency on re-run)
   const existingIds = await HistoryModel.find({ period: periodLabel }).distinct('originalId');
   const existingSet = new Set(existingIds.map(id => id.toString()));
   const toArchive = docs.filter(doc => !existingSet.has(doc._id.toString()));
@@ -70,11 +88,12 @@ const archiveCollection = async (SourceModel, HistoryModel, periodLabel, dateFie
 };
 
 /**
- * Safely clear docs from a source collection ONLY after confirming all are archived.
+ * Safely clear docs from source ONLY after confirming all are archived.
+ * dateField = null means no date filter (e.g. SalesRepStock).
  * Safety gate — data is never lost.
  */
 const safelyClearCollection = async (SourceModel, HistoryModel, periodLabel, dateField, fromDate, toDate, collectionName) => {
-  const query = buildDateFilter(dateField, fromDate, toDate);
+  const query = dateField ? buildDateFilter(dateField, fromDate, toDate) : {};
   const currentCount  = await SourceModel.countDocuments(query);
   const archivedCount = await HistoryModel.countDocuments({ period: periodLabel });
 
@@ -89,28 +108,21 @@ const safelyClearCollection = async (SourceModel, HistoryModel, periodLabel, dat
   console.log(`  🗑️  ${collectionName}: cleared ${currentCount} docs`);
 };
 
+// ─────────────────────────────────────────────────────────────────
 // Main rollover function
-/**
- * Perform period rollover — archives all collections by date range.
- *
- * @param {string} periodLabel  - Human readable label e.g. "FEB-2026", "JAN-2026_MAR-2026"
- * @param {string} fromDate     - ISO date string "YYYY-MM-DD" (start of range, inclusive)
- * @param {string} toDate       - ISO date string "YYYY-MM-DD" (end of range, inclusive)
- * @param {string} performedBy  - userId of admin triggering rollover
- */
+// ─────────────────────────────────────────────────────────────────
+
 const performRollover = async (periodLabel, fromDate, toDate, performedBy) => {
   if (!periodLabel?.trim()) throw new Error('periodLabel is required');
   if (!fromDate || !toDate)  throw new Error('fromDate and toDate are required');
 
   const label = periodLabel.trim().toUpperCase();
 
-  // Block re-closing a completed period
   const existing = await Period.findOne({ label, status: 'completed' });
   if (existing) {
     throw new Error(`Period "${label}" was already closed on ${existing.closedAt}`);
   }
 
-  // Resume or create rollover job
   let job = await Period.findOne({ label, status: { $in: ['started', 'archiving', 'clearing'] } });
 
   if (job) {
@@ -129,7 +141,6 @@ const performRollover = async (periodLabel, fromDate, toDate, performedBy) => {
     console.log(`🚀 Starting rollover for period "${label}" (${fromDate} → ${toDate})`);
   }
 
-  // Use stored dates for idempotent resume
   const fd = job.fromDate ? job.fromDate.toISOString().split('T')[0] : fromDate;
   const td = job.toDate   ? job.toDate.toISOString().split('T')[0]   : toDate;
 
@@ -141,47 +152,31 @@ const performRollover = async (periodLabel, fromDate, toDate, performedBy) => {
 
     const summary = {};
 
-    // Sales Invoices — date field: invoiceDate
     summary.salesInvoices = await archiveCollection(
       SalesInvoice, SalesInvoiceHistory, label, 'invoiceDate', fd, td, 'Sales Invoices'
     );
-
-    // Sales Returns — date field: returnDate
     summary.salesReturns = await archiveCollection(
       SalesReturn, SalesReturnHistory, label, 'returnDate', fd, td, 'Sales Returns'
     );
-
-    // Customer Payments — date field: paymentDate
     summary.customerPayments = await archiveCollection(
       CustomerPayment, CustomerPaymentHistory, label, 'paymentDate', fd, td, 'Customer Payments'
     );
-
-    // GRNs — date field: receivedDate
     summary.grns = await archiveCollection(
       GRN, GRNHistory, label, 'receivedDate', fd, td, 'GRNs'
     );
-
-    // Stock Adjustments — date field: adjustmentDate
     summary.stockAdjustments = await archiveCollection(
       StockAdjustment, StockAdjustmentHistory, label, 'adjustmentDate', fd, td, 'Stock Adjustments'
     );
-
-    // Sales Ledger — date field: createdAt
     summary.salesLedger = await archiveCollection(
       SalesLedger, SalesLedgerHistory, label, 'createdAt', fd, td, 'Sales Ledger'
     );
-
-    // Purchase Ledger — date field: createdAt
     summary.purchaseLedger = await archiveCollection(
       PurchaseLedger, PurchaseLedgerHistory, label, 'createdAt', fd, td, 'Purchase Ledger'
     );
-
-    // Stock Ledger — date field: createdAt
     summary.stockLedger = await archiveCollection(
       StockLedger, StockLedgerHistory, label, 'createdAt', fd, td, 'Stock Ledger'
     );
-
-    // SalesRep Stock — no date field, archive ALL (snapshot of stock at period close)
+    // SalesRep Stock — no date filter, archives entire collection as snapshot
     summary.salesRepStocks = await archiveCollection(
       SalesRepStock, SalesRepStockHistory, label, null, null, null, 'SalesRep Stocks'
     );
@@ -203,12 +198,8 @@ const performRollover = async (periodLabel, fromDate, toDate, performedBy) => {
     await safelyClearCollection(SalesLedger,     SalesLedgerHistory,     label, 'createdAt',      fd, td, 'Sales Ledger');
     await safelyClearCollection(PurchaseLedger,  PurchaseLedgerHistory,  label, 'createdAt',      fd, td, 'Purchase Ledger');
     await safelyClearCollection(StockLedger,     StockLedgerHistory,     label, 'createdAt',      fd, td, 'Stock Ledger');
-
-    // SalesRep Stock — reset to zero (fresh stock for new period)
-    await SalesRepStock.updateMany({}, {
-      $set: { qtyOnHandPrimary: 0, qtyOnHandBase: 0, stockValueBase: 0, stockValuePrimary: 0 }
-    });
-    console.log(`  🔄 SalesRep Stocks: reset to zero for new period`);
+    // SalesRep Stock — deleted like every other collection, no zero-reset
+    await safelyClearCollection(SalesRepStock, SalesRepStockHistory, label, null, null, null, 'SalesRep Stocks');
 
     // ── Phase 3: Complete ─────────────────────────────────────────
     job.status     = 'completed';
@@ -237,7 +228,10 @@ const performRollover = async (periodLabel, fromDate, toDate, performedBy) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────────────
 // Counts — filtered by date range (for "What Gets Archived" UI)
+// ─────────────────────────────────────────────────────────────────
+
 const getCurrentCounts = async (fromDate, toDate) => {
   const invoiceFilter    = buildDateFilter('invoiceDate',    fromDate, toDate);
   const returnFilter     = buildDateFilter('returnDate',     fromDate, toDate);
@@ -260,7 +254,7 @@ const getCurrentCounts = async (fromDate, toDate) => {
     SalesLedger.countDocuments(ledgerFilter),
     PurchaseLedger.countDocuments(ledgerFilter),
     StockLedger.countDocuments(ledgerFilter),
-    SalesRepStock.countDocuments(),
+    SalesRepStock.countDocuments(), // no date filter — always full snapshot
   ]);
 
   return {
@@ -273,7 +267,10 @@ const getCurrentCounts = async (fromDate, toDate) => {
   };
 };
 
+// ─────────────────────────────────────────────────────────────────
 // Other queries
+// ─────────────────────────────────────────────────────────────────
+
 const getClosedPeriods = async () => {
   return await Period.find({ status: 'completed' })
     .sort({ closedAt: -1 })

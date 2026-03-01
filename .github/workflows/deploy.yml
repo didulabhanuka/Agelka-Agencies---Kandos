@@ -17,7 +17,7 @@ env:
   # Set to "true"  → users see the maintenance page
   # Set to "false" → users see the normal app
   # ──────────────────────────────────────────────────────────────────────────────
-  MAINTENANCE_MODE: "true"
+  MAINTENANCE_MODE: "false"
 
 jobs:
   # ── Job 1: Build & Push Docker Images ───────────────────────────────────────
